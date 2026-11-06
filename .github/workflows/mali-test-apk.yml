@@ -1,0 +1,57 @@
+name: Experimental Mali APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out emulator and native dependencies
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Cache native dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            /usr/local/share/vcpkg/installed
+            /usr/local/share/vcpkg/packages
+          key: mali-apk-native-${{ hashFiles('CMakeLists.txt', 'cmake/**', '.ci/setup-android.sh', 'vcpkg.json') }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          validate-wrappers: false
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android and native build dependencies
+        env:
+          VCPKG_ROOT: /usr/local/share/vcpkg
+        run: bash ./.ci/setup-android.sh
+
+      - name: Build experimental APK
+        env:
+          VCPKG_ROOT: /usr/local/share/vcpkg
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        run: bash ./.ci/build-android.sh artifacts/mali-test
+
+      - name: Upload unsigned-for-release, debug-signed APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: vita3k-mali-experimental-apk
+          path: artifacts/mali-test/app.apk
+          if-no-files-found: error

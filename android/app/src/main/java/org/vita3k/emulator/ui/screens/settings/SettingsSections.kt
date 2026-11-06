@@ -515,6 +515,18 @@ private fun GpuSettingsSection(
                     help = accuracyHelp,
                     onShowHelp = onShowHelp
                 )
+                if (!isPerApp) {
+                    SettingsToggleRow(
+                        title = stringResource(R.string.settings_gpu_force_full_precision),
+                        checked = cfg.forceFullPrecision,
+                        onCheckedChange = { onUpdate { forceFullPrecision = it } },
+                        help = SettingsHelpEntry(
+                            title = stringResource(R.string.settings_gpu_force_full_precision),
+                            body = stringResource(R.string.settings_gpu_force_full_precision_desc)
+                        ),
+                        onShowHelp = onShowHelp
+                    )
+                }
             }
             if (!isVulkan) {
                 SettingsToggleRow(

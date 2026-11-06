@@ -2564,8 +2564,9 @@ GeneratedShader convert_gxp(const SceGxmProgram &program, const std::string &sha
     GeneratedShader shader{};
     shader.spirv = convert_gxp_to_spirv_impl(program, shader_hash, features, translation_state, force_shader_debug, dumper);
 
-    constexpr bool strip_relaxed_precision = false;
-    if (strip_relaxed_precision && !shader.spirv.empty() && shader.spirv.size() > 5) {
+    // Experimental fp32 path: suppress RelaxedPrecision across the complete
+    // generated SPIR-V module, including vertex-stage intermediate values.
+    if (features.force_full_precision && shader.spirv.size() > 5) {
         constexpr uint32_t OpDecorate = 71, OpMemberDecorate = 72, DecorationRelaxedPrecision = 0;
         std::vector<uint32_t> filtered;
         filtered.reserve(shader.spirv.size());
@@ -2574,8 +2575,11 @@ GeneratedShader convert_gxp(const SceGxmProgram &program, const std::string &sha
         while (i < shader.spirv.size()) {
             const uint32_t word_count = shader.spirv[i] >> 16;
             const uint32_t opcode = shader.spirv[i] & 0xFFFF;
-            if (word_count == 0 || i + word_count > shader.spirv.size())
-                break; // malformed so keep the rest untouched
+            if (word_count == 0 || i + word_count > shader.spirv.size()) {
+                // Never turn a malformed input into a truncated SPIR-V module.
+                filtered.clear();
+                break;
+            }
             const bool is_relaxed = (opcode == OpDecorate && word_count >= 3 && shader.spirv[i + 2] == DecorationRelaxedPrecision)
                 || (opcode == OpMemberDecorate && word_count >= 4 && shader.spirv[i + 3] == DecorationRelaxedPrecision);
             if (is_relaxed)
@@ -2584,7 +2588,7 @@ GeneratedShader convert_gxp(const SceGxmProgram &program, const std::string &sha
                 filtered.insert(filtered.end(), shader.spirv.begin() + i, shader.spirv.begin() + i + word_count);
             i += word_count;
         }
-        if (stripped > 0) {
+        if (!filtered.empty() && stripped > 0) {
             LOG_INFO("[PRECISION] stripped {} RelaxedPrecision decorations from {}", stripped, shader_hash);
             shader.spirv = std::move(filtered);
         }

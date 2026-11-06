@@ -621,7 +621,7 @@ static const vk::SpecializationInfo frag_spec_infos[4] = {
     { .mapEntryCount = 2, .pMapEntries = frag_spec_entries, .dataSize = sizeof(frag_spec_data[3]), .pData = frag_spec_data[3] },
 };
 
-static Sha256Hash shader_cache_key(const SceGxmProgram *program, const Sha256Hash &base_hash, bool is_vertex, const shader::Hints &hints, std::string &version_suffix) {
+static Sha256Hash shader_cache_key(const SceGxmProgram *program, const Sha256Hash &base_hash, bool is_vertex, const shader::Hints &hints, bool force_full_precision, std::string &version_suffix) {
     // A one-channel surface moves a different component into the stored channel, so it needs its own cache entry
     const int one_channel_source = is_vertex ? -1 : gxm::one_channel_source_component(hints.color_format);
     Sha256Hash hash = base_hash;
@@ -643,6 +643,11 @@ static Sha256Hash shader_cache_key(const SceGxmProgram *program, const Sha256Has
         hash[6] ^= 0x75;
         version_suffix += "u";
     }
+    if (force_full_precision) {
+        // Do not reuse SPIR-V (or in-memory shader modules) from the fp16 path.
+        hash[7] ^= 0xA5;
+        version_suffix += "fp32";
+    }
     return hash;
 }
 
@@ -651,7 +656,7 @@ vk::PipelineShaderStageCreateInfo PipelineCache::retrieve_shader(const SceGxmPro
         LOG_WARN_ONCE("Mask not implemented in the vulkan renderer!");
 
     std::string version_suffix;
-    const Sha256Hash hash = shader_cache_key(program, base_hash, is_vertex, hints, version_suffix);
+    const Sha256Hash hash = shader_cache_key(program, base_hash, is_vertex, hints, state.features.force_full_precision, version_suffix);
 
     const vk::ShaderModule shader_compiling = std::bit_cast<vk::ShaderModule>(~0ULL);
 
@@ -2026,7 +2031,7 @@ bool PipelineCache::codegen_ignores_draw_hints(const SceGxmProgram &program, boo
 
 bool PipelineCache::shader_available(const SceGxmProgram &program, const Sha256Hash &base_hash, bool is_vertex, const shader::Hints &hints) {
     std::string version_suffix;
-    const Sha256Hash hash = shader_cache_key(&program, base_hash, is_vertex, hints, version_suffix);
+    const Sha256Hash hash = shader_cache_key(&program, base_hash, is_vertex, hints, state.features.force_full_precision, version_suffix);
     {
         std::lock_guard<std::mutex> guard(shaders_mutex);
         const auto found = shaders.find(hash);

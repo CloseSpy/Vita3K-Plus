@@ -1157,7 +1157,12 @@ void VKState::late_init(const Config &cfg, const std::string_view game_id, MemSt
 
     features.enable_memory_mapping = mapping_method != MappingMethod::Disabled;
 
+    // Experimental geometry workaround. Keep it opt-in so a tester can compare
+    // results and performance against the normal shader precision path.
+    constexpr uint32_t ARM_VENDOR_ID = 0x13B5;
     features.force_full_precision = cfg.force_full_precision;
+    if (physical_device_properties.vendorID == ARM_VENDOR_ID)
+        LOG_INFO("Mali full-precision shader experiment: {}", features.force_full_precision ? "enabled" : "disabled");
 
 #ifdef __ANDROID__
     if (mapping_method == MappingMethod::NativeBuffer) {
