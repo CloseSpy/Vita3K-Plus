@@ -2,6 +2,9 @@ name: Experimental Mali APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - mali-v2-upstream
 
 permissions:
   contents: read
