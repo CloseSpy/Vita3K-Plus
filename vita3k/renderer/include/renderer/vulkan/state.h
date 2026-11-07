@@ -134,6 +134,8 @@ struct VKState : public renderer::State {
     BufferTrapping buffer_trapping;
     // modify the behavior of trapping on vertex buffers if there are shader stores
     bool has_shader_store = false;
+    // V3 opt-in: bind guest-thread snapshots even with memory mapping disabled.
+    bool experimental_vertex_snapshots = false;
 
     // queue where we put requests that need to wait for the GPU
     Queue<WaitThreadRequest> request_queue;

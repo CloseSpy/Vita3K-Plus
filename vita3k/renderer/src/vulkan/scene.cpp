@@ -352,7 +352,7 @@ static void bind_vertex_streams(VKContext &context, MemState &mem, uint32_t inst
             const bool restride = layouts[i].repack;
             uint32_t stream_size = state.vertex_streams[i].size;
             // by the time we bind the game may already have recycled this block so prefer the copy taken when the scene was kicked
-            const uint8_t *snapshot = mapped
+            const uint8_t *snapshot = (mapped || context.state.experimental_vertex_snapshots)
                 ? renderer::stream_snapshot_get(state.vertex_streams[i].snapshot, stream_size)
                 : nullptr;
             bool copy_misaligned = false;
@@ -738,7 +738,8 @@ void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format
     uint32_t max_index = 0;
     const uint32_t index_bytes = static_cast<uint32_t>(index_size * count);
     // the game may already have reused its index memory so prefer the copy taken when the scene was kicked
-    const uint8_t *index_copy = use_memory_mapping ? renderer::stream_snapshot_get(index_snapshot, index_bytes) : nullptr;
+    const uint8_t *index_copy = (use_memory_mapping || context.state.experimental_vertex_snapshots)
+        ? renderer::stream_snapshot_get(index_snapshot, index_bytes) : nullptr;
     if (index_copy) {
         if (context.state.mapping_method == MappingMethod::DoubleBuffer) {
             if (format == SCE_GXM_INDEX_FORMAT_U16) {

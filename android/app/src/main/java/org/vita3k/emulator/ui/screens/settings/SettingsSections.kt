@@ -526,6 +526,16 @@ private fun GpuSettingsSection(
                         ),
                         onShowHelp = onShowHelp
                     )
+                    SettingsToggleRow(
+                        title = stringResource(R.string.settings_gpu_experimental_vertex_snapshots),
+                        checked = cfg.experimentalVertexSnapshots,
+                        onCheckedChange = { onUpdate { experimentalVertexSnapshots = it } },
+                        help = SettingsHelpEntry(
+                            title = stringResource(R.string.settings_gpu_experimental_vertex_snapshots),
+                            body = stringResource(R.string.settings_gpu_experimental_vertex_snapshots_desc)
+                        ),
+                        onShowHelp = onShowHelp
+                    )
                 }
             }
             if (!isVulkan) {

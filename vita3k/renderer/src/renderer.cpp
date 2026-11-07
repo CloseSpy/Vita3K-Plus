@@ -290,6 +290,9 @@ uint64_t g_snap_stale = 0;
 uint64_t g_snap_mismatch = 0;
 int64_t g_snap_next_report = 0;
 std::atomic<bool> g_snap_disabled{ false };
+// V3 diagnostic: explicitly opt in to guest-thread snapshots even for games
+// registering buffer-store shaders. Never used by default.
+std::atomic<bool> g_snap_override{ false };
 
 uint32_t snap_align(const uint32_t size) {
     return (size + 63u) & ~63u;
@@ -411,7 +414,19 @@ void stream_snapshot_reset() {
     g_snap_mismatch = 0;
 }
 
+void stream_snapshot_set_override(const bool enabled) {
+    g_snap_override.store(enabled, std::memory_order_relaxed);
+    if (enabled) {
+        g_snap_disabled.store(false, std::memory_order_relaxed);
+        LOG_WARN("[SNAPSHOT V3] Experimental vertex/index stream snapshots enabled; GPU-written vertex memory may not be captured correctly");
+    }
+}
+
 void stream_snapshot_disable_for_program(const uint32_t program_addr, const uint32_t program_flags) {
+    // Only enabled by an explicit experiment with memory mapping disabled.
+    // The normal safety guard below remains unchanged for all other users.
+    if (g_snap_override.load(std::memory_order_relaxed))
+        return;
     if (g_snap_disabled.exchange(true))
         return;
     {

@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - mali-v2-upstream
+      - mali-v3-snapshots
 
 permissions:
   contents: read

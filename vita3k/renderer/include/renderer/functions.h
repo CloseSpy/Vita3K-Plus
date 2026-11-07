@@ -110,6 +110,7 @@ int64_t coarse_now_ms();
 void stream_snapshot_disable_for_program(uint32_t program_addr, uint32_t program_flags);
 bool stream_snapshot_disabled();
 void stream_snapshot_reset();
+void stream_snapshot_set_override(bool enabled);
 void draw(State &state, Context *ctx, SceGxmPrimitiveType prim_type, SceGxmIndexFormat index_type, Ptr<const void> index_data, const std::uint32_t index_count, const std::uint32_t instance_count);
 void transfer_copy(State &state, uint32_t colorKeyValue, uint32_t colorKeyMask, SceGxmTransferColorKeyMode colorKeyMode, const SceGxmTransferImage *images, SceGxmTransferType srcType, SceGxmTransferType destType);
 void transfer_downscale(State &state, const SceGxmTransferImage *src, const SceGxmTransferImage *dest);

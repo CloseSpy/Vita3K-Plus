@@ -19,6 +19,32 @@ Hardware: Kinhank X5 Pro, RK3588S, Mali-G610 (Android / Vulkan).
 
 The code has not yet been validated as a fix for MK9 on Mali-G610.
 
+## V2 findings on X5 Pro (reported 2026-11-07)
+
+- With **Page Table** mapping and `Experimental Mali geometry fix` **off**,
+  fighting characters still had severely stretched, exploding meshes.
+- With the precision experiment **on**, a Cyrax close-up looked more
+  recognizable, but Scorpion looked worse; fight geometry was still broken.
+  Cinematics and fights are not an equivalent A/B comparison.
+- With **Double Buffer** mapping and the precision experiment **off**,
+  fighter geometry was still badly distorted (observed Cyrax/Mileena fight).
+- With **Memory Mapping = Disabled** and the precision experiment **off**,
+  the long screen-crossing polygon strips were noticeably reduced. Character
+  body parts were more recognizable, particularly Cyrax. Persistent fan-like
+  vertex spikes remained on Cyrax, Kratos, Kitana, Raiden and other fighters.
+- User reported combat with memory mapping disabled was **very fluid, like the
+  original game**. No instrumented FPS measurement was taken.
+
+**Current best observed configuration:** Vulkan, memory mapping disabled,
+precision experiment off. This is a partial visual improvement, not a fix.
+
+**Next engineering focus:** investigate the vertex-buffer upload / GPU memory
+mapping and shader-store paths. `enable_memory_mapping` changes more than
+buffer-copy behavior (including the vertex-store emulation path), so the A/B
+result does not by itself identify a root cause. Preserve the playable V2
+configuration while investigating. Tests across different fighters and arenas
+are useful observations but not controlled same-scene comparisons.
+
 ## Device test procedure
 
 1. Preserve the V1 APK for comparison. Keep game data and firmware backups.
@@ -30,3 +56,23 @@ The code has not yet been validated as a fix for MK9 on Mali-G610.
 
 Changing between APKs or changing shader options without a fresh cache may
 confound results. Preserve saves before clearing application data or caches.
+
+## V3 hypothesis: snapshot guest vertex/index data early
+
+V2's best result used `Memory Mapping = Disabled`. In this mode, the Vulkan
+renderer normally copies vertex/index bytes when the queued draw executes.
+If MK9 reuses those guest buffers on the CPU before the host renderer reaches
+the queued draw, the copied data may already belong to a later draw.
+
+V3 adds a **separate, default-OFF** `Experimental Mali vertex snapshots (V3)`
+switch. When enabled on Mali **and only with memory mapping disabled**, it
+copies small vertex and index streams when the guest kicks the command list,
+and binds those snapshots during rendering. The general code normally
+disables snapshots when a game registers GPU buffer-store shaders, because
+an early copy can miss data produced later by the GPU. V3 deliberately
+overrides that guard when the tester opts in, so **missing geometry or worse
+visual corruption is possible**. This is a diagnostic hypothesis, not a fix.
+
+Test with precision experiment OFF and memory mapping Disabled. Compare the
+same fighters, same arena, one toggle at a time. If the result deteriorates,
+disable the V3 snapshot switch and restart. Leave V2 as the fallback APK.

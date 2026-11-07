@@ -1174,9 +1174,20 @@ void VKState::late_init(const Config &cfg, const std::string_view game_id, MemSt
 
     features.enable_memory_mapping = mapping_method != MappingMethod::Disabled;
 
+    // The user's most stable Mali/MK9 baseline disables memory mapping.
+    // This opt-in V3 experiment compares guest-thread vertex snapshots against
+    // the normal deferred reads, without changing the shader compiler.
+    constexpr uint32_t ARM_VENDOR_ID = 0x13B5;
+    const bool experimental_vertex_snapshots = cfg.experimental_vertex_snapshots
+        && mapping_method == MappingMethod::Disabled
+        && physical_device_properties.vendorID == ARM_VENDOR_ID;
+    this->experimental_vertex_snapshots = experimental_vertex_snapshots;
+    renderer::stream_snapshot_set_override(experimental_vertex_snapshots);
+    if (cfg.experimental_vertex_snapshots && !experimental_vertex_snapshots)
+        LOG_WARN("Experimental vertex snapshots require a Mali GPU with Memory Mapping = Disabled");
+
     // Experimental geometry workaround. Keep it opt-in so a tester can compare
     // results and performance against the normal shader precision path.
-    constexpr uint32_t ARM_VENDOR_ID = 0x13B5;
     features.force_full_precision = cfg.force_full_precision;
     if (physical_device_properties.vendorID == ARM_VENDOR_ID)
         LOG_INFO("Mali full-precision shader experiment: {}", features.force_full_precision ? "enabled" : "disabled");

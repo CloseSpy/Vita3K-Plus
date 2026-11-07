@@ -427,6 +427,8 @@
     <string name="settings_gpu_memory_mapping">Memory Mapping</string>
     <string name="settings_gpu_force_full_precision">Experimental Mali geometry fix</string>
     <string name="settings_gpu_force_full_precision_desc">Force full precision in translated shaders to test whether stretched polygons improve on Mali GPUs. Experimental; may reduce performance. Restart the game after changing this option.</string>
+    <string name="settings_gpu_experimental_vertex_snapshots">Experimental Mali vertex snapshots (V3)</string>
+    <string name="settings_gpu_experimental_vertex_snapshots_desc">Only works on Mali with Memory Mapping set to Disabled. Captures vertex and index buffers earlier to test whether reused game memory causes stretched polygons. Some shaders write vertex memory on the GPU, so this experiment may make graphics worse or cause missing geometry. Leave the full-precision geometry fix OFF, and restart the game after changing this switch.</string>
     <string name="settings_gpu_memory_mapping_desc">Memory mapping improved performance, reduces memory usage and fixes many graphical issues. However, it may be unstable on some GPUs.</string>
     <string name="settings_gpu_custom_driver">Custom GPU Driver</string>
     <string name="settings_gpu_custom_driver_desc">Choose which installed custom GPU driver to inject. Installing drivers requires a compatible Android GPU driver ZIP and a supported Qualcomm Vulkan stack.</string>

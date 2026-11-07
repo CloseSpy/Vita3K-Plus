@@ -46,6 +46,7 @@ struct EmulatorConfigFields {
     jfieldID backendRenderer = nullptr;
     jfieldID highAccuracy = nullptr;
     jfieldID forceFullPrecision = nullptr;
+    jfieldID experimentalVertexSnapshots = nullptr;
     jfieldID resolutionMultiplier = nullptr;
     jfieldID disableSurfaceSync = nullptr;
     jfieldID screenFilter = nullptr;
@@ -135,6 +136,7 @@ EmulatorConfigFields resolve_config_fields(JNIEnv *env) {
     fields.backendRenderer = env->GetFieldID(fields.cls, "backendRenderer", "Ljava/lang/String;");
     fields.highAccuracy = env->GetFieldID(fields.cls, "highAccuracy", "Z");
     fields.forceFullPrecision = env->GetFieldID(fields.cls, "forceFullPrecision", "Z");
+    fields.experimentalVertexSnapshots = env->GetFieldID(fields.cls, "experimentalVertexSnapshots", "Z");
     fields.resolutionMultiplier = env->GetFieldID(fields.cls, "resolutionMultiplier", "F");
     fields.disableSurfaceSync = env->GetFieldID(fields.cls, "disableSurfaceSync", "Z");
     fields.screenFilter = env->GetFieldID(fields.cls, "screenFilter", "Ljava/lang/String;");
@@ -311,6 +313,7 @@ void fill_config_object(JNIEnv *env, jobject obj, const EmulatorConfigFields &fi
     }
     env->SetBooleanField(obj, fields.highAccuracy, current_config.high_accuracy);
     env->SetBooleanField(obj, fields.forceFullPrecision, config.force_full_precision);
+    env->SetBooleanField(obj, fields.experimentalVertexSnapshots, config.experimental_vertex_snapshots);
     env->SetFloatField(obj, fields.resolutionMultiplier, current_config.resolution_multiplier);
     env->SetBooleanField(obj, fields.disableSurfaceSync, current_config.disable_surface_sync);
     {
@@ -453,6 +456,7 @@ void read_config_object(JNIEnv *env, jobject obj, const EmulatorConfigFields &fi
     }
     current_config.high_accuracy = env->GetBooleanField(obj, fields.highAccuracy) != JNI_FALSE;
     config.force_full_precision = env->GetBooleanField(obj, fields.forceFullPrecision) != JNI_FALSE;
+    config.experimental_vertex_snapshots = env->GetBooleanField(obj, fields.experimentalVertexSnapshots) != JNI_FALSE;
     current_config.resolution_multiplier = env->GetFloatField(obj, fields.resolutionMultiplier);
     current_config.disable_surface_sync = env->GetBooleanField(obj, fields.disableSurfaceSync) != JNI_FALSE;
     {
