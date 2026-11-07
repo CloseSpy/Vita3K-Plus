@@ -739,7 +739,8 @@ void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format
     const uint32_t index_bytes = static_cast<uint32_t>(index_size * count);
     // the game may already have reused its index memory so prefer the copy taken when the scene was kicked
     const uint8_t *index_copy = (use_memory_mapping || context.state.experimental_vertex_snapshots)
-        ? renderer::stream_snapshot_get(index_snapshot, index_bytes) : nullptr;
+        ? renderer::stream_snapshot_get(index_snapshot, index_bytes)
+        : nullptr;
     if (index_copy) {
         if (context.state.mapping_method == MappingMethod::DoubleBuffer) {
             if (format == SCE_GXM_INDEX_FORMAT_U16) {
