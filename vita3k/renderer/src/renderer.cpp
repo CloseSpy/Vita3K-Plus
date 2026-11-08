@@ -358,8 +358,8 @@ void stream_snapshot_kick(MemState &mem, CommandList &list) {
         if (helper.pop<GXMState>() != GXMState::VertexStream)
             continue;
         const Ptr<const uint8_t> stream = helper.pop<Ptr<const uint8_t>>();
-        helper.pop<std::size_t>();
-        const std::size_t length = helper.pop<std::size_t>();
+        helper.pop<uint32_t>();
+        const std::size_t length = helper.pop<uint32_t>();
         uint64_t handle = length <= SNAP_MAX_BYTES ? snap_copy_locked(mem, stream.address(), static_cast<uint32_t>(length)) : ~0ull;
         helper.push(handle);
     }
@@ -441,8 +441,13 @@ bool stream_snapshot_disabled() {
 }
 
 void set_vertex_stream(State &state, Context *ctx, const std::size_t index, const std::size_t data_len, const Ptr<const void> stream,
-    const uint64_t v5_fingerprint, const bool v5_sampled) {
-    renderer::add_state_set_command(ctx, renderer::GXMState::VertexStream, stream, index, data_len, static_cast<uint64_t>(~0ull), v5_fingerprint, v5_sampled);
+    const uint64_t v5_fingerprint) {
+    // 32-byte maximum command payload: state(2), ptr(4), index(4), length(4),
+    // snapshot(8), diagnostic fingerprint(8) = 30 bytes.
+    if (index >= SCE_GXM_MAX_VERTEX_STREAMS || data_len > UINT32_MAX)
+        return;
+    renderer::add_state_set_command(ctx, renderer::GXMState::VertexStream, stream,
+        static_cast<uint32_t>(index), static_cast<uint32_t>(data_len), static_cast<uint64_t>(~0ull), v5_fingerprint);
 }
 
 void draw(State &state, Context *ctx, SceGxmPrimitiveType prim_type, SceGxmIndexFormat index_type, Ptr<const void> index_data, const std::uint32_t index_count, const std::uint32_t instance_count) {

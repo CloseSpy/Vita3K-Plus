@@ -2665,7 +2665,7 @@ static int gxmDrawElementGeneral(EmuEnvState &emuenv, const char *export_name, c
 
             uint64_t v5_hash = 0;
             const bool v5_valid = v5_sample && renderer::vertex_diagnostics::fingerprint_guest(emuenv.mem, data.address(), data_length, v5_hash);
-            renderer::set_vertex_stream(*emuenv.renderer, context->renderer.get(), stream_index, data_length, data, v5_hash, v5_valid);
+            renderer::set_vertex_stream(*emuenv.renderer, context->renderer.get(), stream_index, data_length, data, v5_valid ? v5_hash : 0);
         }
     }
 
@@ -2813,7 +2813,7 @@ EXPORT(int, sceGxmDrawPrecomputed, SceGxmContext *context, SceGxmPrecomputedDraw
 
             uint64_t v5_hash = 0;
             const bool v5_valid = v5_sample && renderer::vertex_diagnostics::fingerprint_guest(emuenv.mem, data.address(), data_length, v5_hash);
-            renderer::set_vertex_stream(*emuenv.renderer, context->renderer.get(), stream_index, data_length, data, v5_hash, v5_valid);
+            renderer::set_vertex_stream(*emuenv.renderer, context->renderer.get(), stream_index, data_length, data, v5_valid ? v5_hash : 0);
         }
     }
 

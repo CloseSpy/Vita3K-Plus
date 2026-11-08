@@ -397,7 +397,7 @@ static void bind_vertex_streams(VKContext &context, MemState &mem, uint32_t inst
                 // V5: compare a small sample from the guest draw thread with
                 // the bytes actually uploaded on the render thread. No copies
                 // or barriers are added to the real rendering path.
-                if (context.state.physical_device_properties.vendorID == 0x13B5 && state.vertex_streams[i].v5_sampled) {
+                if (context.state.physical_device_properties.vendorID == 0x13B5 && state.vertex_streams[i].v5_fingerprint != 0) {
                     uint64_t current_hash = 0;
                     const bool valid = snapshot
                         ? (current_hash = renderer::vertex_diagnostics::fingerprint_bytes(stream, stream_size), true)

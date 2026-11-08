@@ -516,18 +516,16 @@ COMMAND_SET_STATE(cull_mode) {
 COMMAND_SET_STATE(vertex_stream) {
     TRACY_FUNC_COMMANDS_SET_STATE(vertex_stream);
     const Ptr<const uint8_t> stream_data = helper.pop<Ptr<const uint8_t>>();
-    const std::size_t stream_index = helper.pop<std::size_t>();
-    const std::size_t stream_data_length = helper.pop<std::size_t>();
+    const std::size_t stream_index = helper.pop<uint32_t>();
+    const std::size_t stream_data_length = helper.pop<uint32_t>();
     const uint64_t stream_snapshot = helper.pop<uint64_t>();
     const uint64_t v5_fingerprint = helper.pop<uint64_t>();
-    const bool v5_sampled = helper.pop<bool>();
 
     renderer::GXMStreamInfo &info = render_context->record.vertex_streams[stream_index];
     info.data = stream_data;
     info.size = stream_data_length;
     info.snapshot = stream_snapshot;
     info.v5_fingerprint = v5_fingerprint;
-    info.v5_sampled = v5_sampled;
 }
 
 COMMAND_SET_STATE(fragment_program_enable) {

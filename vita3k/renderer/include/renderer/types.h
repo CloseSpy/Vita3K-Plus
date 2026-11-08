@@ -83,7 +83,6 @@ struct GXMStreamInfo {
     size_t size = 0;
     uint64_t snapshot = ~0ull;
     uint64_t v5_fingerprint = 0;
-    bool v5_sampled = false;
 };
 
 // We separate the following two parts of the stencil state because the first is part of the pipeline creation
