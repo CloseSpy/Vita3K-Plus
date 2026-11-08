@@ -52,6 +52,7 @@
 #include <renderer/functions.h>
 #include <renderer/state.h>
 #include <renderer/types.h>
+#include <renderer/vertex_diagnostics.h>
 #include <util/align.h>
 #include <util/bytes.h>
 #include <util/log.h>
@@ -2530,6 +2531,14 @@ static void gxmSetUniformBuffers(renderer::State &state, GxmState &gxm, SceGxmCo
     }
 }
 
+// Restrict diagnostic hashing to sparse draws. This function is shared by
+// ordinary and precomputed draw paths, so the sample spans both kinds.
+static bool v5_sample_draw() {
+    static std::atomic<uint64_t> draws{ 0 };
+    const uint64_t n = ++draws;
+    return n <= 24 || (n % 16384) == 0;
+}
+
 static int gxmDrawElementGeneral(EmuEnvState &emuenv, const char *export_name, const SceUID thread_id, SceGxmContext *context, SceGxmPrimitiveType primType, SceGxmIndexFormat indexType, Ptr<const void> indexData, uint32_t indexCount, uint32_t instanceCount) {
     if (!context || !indexData)
         return RET_ERROR(SCE_GXM_ERROR_INVALID_POINTER);
@@ -2634,6 +2643,7 @@ static int gxmDrawElementGeneral(EmuEnvState &emuenv, const char *export_name, c
     }
 
     size_t max_data_length[SCE_GXM_MAX_VERTEX_STREAMS] = {};
+    const bool v5_sample = v5_sample_draw();
     std::uint32_t stream_used = 0;
     for (const SceGxmVertexAttribute &attribute : gxm_vertex_program.attributes) {
         const size_t attribute_size = gxm::attribute_format_size(attribute.format) * attribute.componentCount;
@@ -2653,7 +2663,9 @@ static int gxmDrawElementGeneral(EmuEnvState &emuenv, const char *export_name, c
             const size_t data_length = max_data_length[stream_index];
             const Ptr<const void> data = context->state.stream_data[stream_index];
 
-            renderer::set_vertex_stream(*emuenv.renderer, context->renderer.get(), stream_index, data_length, data);
+            uint64_t v5_hash = 0;
+            const bool v5_valid = v5_sample && renderer::vertex_diagnostics::fingerprint_guest(emuenv.mem, data.address(), data_length, v5_hash);
+            renderer::set_vertex_stream(*emuenv.renderer, context->renderer.get(), stream_index, data_length, data, v5_hash, v5_valid);
         }
     }
 
@@ -2778,6 +2790,7 @@ EXPORT(int, sceGxmDrawPrecomputed, SceGxmContext *context, SceGxmPrecomputedDraw
     }
 
     size_t max_data_length[SCE_GXM_MAX_VERTEX_STREAMS] = {};
+    const bool v5_sample = v5_sample_draw();
     std::uint32_t stream_used = 0;
     for (const SceGxmVertexAttribute &attribute : vertex_program->attributes) {
         const size_t attribute_size = gxm::attribute_format_size(attribute.format) * attribute.componentCount;
@@ -2798,7 +2811,9 @@ EXPORT(int, sceGxmDrawPrecomputed, SceGxmContext *context, SceGxmPrecomputedDraw
             const size_t data_length = max_data_length[stream_index];
             const Ptr<const void> data = stream_data[stream_index];
 
-            renderer::set_vertex_stream(*emuenv.renderer, context->renderer.get(), stream_index, data_length, data);
+            uint64_t v5_hash = 0;
+            const bool v5_valid = v5_sample && renderer::vertex_diagnostics::fingerprint_guest(emuenv.mem, data.address(), data_length, v5_hash);
+            renderer::set_vertex_stream(*emuenv.renderer, context->renderer.get(), stream_index, data_length, data, v5_hash, v5_valid);
         }
     }
 

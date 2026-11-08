@@ -24,6 +24,7 @@
 
 #include <gxm/functions.h>
 #include <renderer/functions.h>
+#include <renderer/vertex_diagnostics.h>
 #include <renderer/vulkan/gxm_to_vulkan.h>
 #include <shader/spirv_recompiler.h>
 
@@ -346,6 +347,24 @@ static void bind_vertex_streams(VKContext &context, MemState &mem, uint32_t inst
     for (int i = 0; i < max_stream_idx; i++)
         layouts[i] = context.state.pipeline_cache.vertex_stream_layout(vertex_program, i);
 
+    // V5: identify unusual Vita layouts without changing vertex input state.
+    if (context.state.physical_device_properties.vendorID == 0x13B5) {
+        static thread_local std::set<const ProgramBinding *> seen_bindings;
+        if (seen_bindings.size() < 24 && seen_bindings.insert(&vertex_program).second) {
+            LOG_INFO("[MALI-V5-LAYOUT] shader={} attrs={} streams={} binding-per-attr={}",
+                hex_string(vertex_program.vertex_program->hash).substr(0, 16), vertex_program.attributes.size(),
+                max_stream_idx, context.state.pipeline_cache.needs_attribute_bindings(vertex_program));
+            for (size_t a = 0; a < vertex_program.attributes.size(); ++a) {
+                const auto &attr = vertex_program.attributes[a];
+                const auto &stream = vertex_program.streams[attr.streamIndex];
+                LOG_INFO("[MALI-V5-LAYOUT] attr={} reg={} used={} stream={} off={} fmt={} components={} stride={} idxSource={} repack={} outStride={}",
+                    a, attr.regIndex, vkvert->attribute_infos.contains(attr.regIndex), attr.streamIndex, attr.offset,
+                    static_cast<uint32_t>(attr.format), attr.componentCount, stream.stride, stream.indexSource,
+                    layouts[attr.streamIndex].repack, layouts[attr.streamIndex].stride);
+            }
+        }
+    }
+
     for (int i = 0; i < max_stream_idx; i++) {
         if (state.vertex_streams[i].data) {
             const bool mapped = context.state.features.enable_memory_mapping;
@@ -375,6 +394,30 @@ static void bind_vertex_streams(VKContext &context, MemState &mem, uint32_t inst
                 if (!context.vertex_stream_ring_buffer.handle())
                     context.vertex_stream_ring_buffer.create();
                 const uint8_t *stream = snapshot ? snapshot : state.vertex_streams[i].data.get(mem);
+                // V5: compare a small sample from the guest draw thread with
+                // the bytes actually uploaded on the render thread. No copies
+                // or barriers are added to the real rendering path.
+                if (context.state.physical_device_properties.vendorID == 0x13B5 && state.vertex_streams[i].v5_sampled) {
+                    uint64_t current_hash = 0;
+                    const bool valid = snapshot
+                        ? (current_hash = renderer::vertex_diagnostics::fingerprint_bytes(stream, stream_size), true)
+                        : renderer::vertex_diagnostics::fingerprint_guest(mem, state.vertex_streams[i].data.address(), stream_size, current_hash);
+                    static thread_local uint64_t samples = 0;
+                    static thread_local uint64_t mismatches = 0;
+                    static thread_local uint64_t lines = 0;
+                    ++samples;
+                    const bool mismatch = valid && current_hash != state.vertex_streams[i].v5_fingerprint;
+                    if (mismatch)
+                        ++mismatches;
+                    if (lines < 180 && (samples <= 24 || (samples % 32) == 0 || (mismatch && mismatches <= 24))) {
+                        LOG_INFO("[MALI-V5-CRC] sample={} stream={} size={} source={} repack={} match={} drawHash={:016X} bindHash={:016X}",
+                            samples, i, stream_size, snapshot ? "snapshot" : "guest", restride,
+                            valid ? (mismatch ? "NO" : "yes") : "unavailable", state.vertex_streams[i].v5_fingerprint, current_hash);
+                        ++lines;
+                    }
+                    if ((samples % 64) == 0)
+                        LOG_INFO("[MALI-V5-CRC] summary sampled={} mismatches={}", samples, mismatches);
+                }
                 if (restride) {
                     const uint32_t repacked = repacked_size(stream_size, vertex_program.streams[i].stride, layouts[i]);
                     context.vertex_ring_make_room(repacked);

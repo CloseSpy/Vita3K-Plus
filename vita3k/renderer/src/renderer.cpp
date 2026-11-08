@@ -440,8 +440,9 @@ bool stream_snapshot_disabled() {
     return g_snap_disabled.load(std::memory_order_relaxed);
 }
 
-void set_vertex_stream(State &state, Context *ctx, const std::size_t index, const std::size_t data_len, const Ptr<const void> stream) {
-    renderer::add_state_set_command(ctx, renderer::GXMState::VertexStream, stream, index, data_len, static_cast<uint64_t>(~0ull));
+void set_vertex_stream(State &state, Context *ctx, const std::size_t index, const std::size_t data_len, const Ptr<const void> stream,
+    const uint64_t v5_fingerprint, const bool v5_sampled) {
+    renderer::add_state_set_command(ctx, renderer::GXMState::VertexStream, stream, index, data_len, static_cast<uint64_t>(~0ull), v5_fingerprint, v5_sampled);
 }
 
 void draw(State &state, Context *ctx, SceGxmPrimitiveType prim_type, SceGxmIndexFormat index_type, Ptr<const void> index_data, const std::uint32_t index_count, const std::uint32_t instance_count) {
