@@ -76,3 +76,34 @@ visual corruption is possible**. This is a diagnostic hypothesis, not a fix.
 Test with precision experiment OFF and memory mapping Disabled. Compare the
 same fighters, same arena, one toggle at a time. If the result deteriorates,
 disable the V3 snapshot switch and restart. Leave V2 as the fallback APK.
+
+## V3 result (reported 2026-11-07)
+
+- The tester confirmed that the Scorpion-vs-Jade combat photograph was captured
+  **after enabling** `Experimental Mali vertex snapshots (V3)`.
+- Both fighter meshes still exploded into fan-shaped spikes, while the arena
+  rendered normally. The V3 early-snapshot hypothesis has **not corrected**
+  the observable vertex geometry issue.
+- A rigorously controlled V3-on versus V3-off comparison in the same arena is
+  still outstanding, so do not claim V3 is worse or identical in every scene.
+- Recommended fallback: V3 switch OFF; memory mapping Disabled, full precision
+  OFF, with an application/game restart after changing shader settings.
+
+## Historical upstream comparison lead (unverified for this X5 Pro)
+
+- Official Vita3K-Android issue #769 reports Mortal Kombat Komplete Edition
+  apparently ran at 60 FPS without polygon artifacts on a different Mali GPU
+  (G615 MC6) at upstream build **3961**, but had white/purple lines in build
+  **3962**. This is a user's report, **not an independently verified fix**.
+  https://github.com/Vita3K/Vita3K-Android/issues/769
+- Official build 3961 for Android exists at:
+  https://github.com/Vita3K/Vita3K-builds/releases/download/3961/vita3k-3961-2f50abb5-android.apk
+- The official upstream 3961/3962 source comparison shows only one intervening
+  commit (0e9e3a2), changing **GUI/config reading files**, not renderer code.
+  Hence the issue alone is **not evidence** that an identified renderer change
+  caused the regression. Other causes (build variability, settings, shader
+  cache, drivers, user error) remain possible.
+- An isolated test of official 3961 on the RK3588S Mali-G610, after protecting
+  game saves and firmware, can cheaply falsify/confirm the report's relevance.
+  Installing it may require uninstalling the + fork due package-signature
+  conflicts. Preserve the installed APK and save data before swapping builds.
