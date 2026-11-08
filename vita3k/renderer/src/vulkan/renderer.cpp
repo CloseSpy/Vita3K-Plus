@@ -1289,6 +1289,11 @@ void VKState::log_gpu_configuration(const Config &cfg) {
         features.should_use_shader_interlock(), features.should_use_texture_barrier(),
         features.is_programmable_blending_supported(), features.support_depth_mirror);
     LOG_INFO("  build switches: enable_depth_clamp={} support_clip_distance={} gxm_clip_planes={} vertex_store_slots={}", enable_depth_clamp, features.support_clip_distance, features.support_gxm_clip_planes, features.vertex_store_slots);
+    if (physical_device_properties.vendorID == 0x13B5)
+        LOG_INFO("[MALI-V4] Diagnostic-only vertex-store tracing enabled; rendering behavior is unchanged. vertexStores={} fragmentStores={} slots={} mappingEnabled={} snapshots={}",
+            static_cast<bool>(physical_device_features.vertexPipelineStoresAndAtomics),
+            static_cast<bool>(physical_device_features.fragmentStoresAndAtomics),
+            features.vertex_store_slots, features.enable_memory_mapping, experimental_vertex_snapshots);
 
     const char *mapping_names[] = { "Disabled", "DoubleBuffer", "ExternalHost", "PageTable", "NativeBuffer" };
     const int mapping_idx = static_cast<int>(mapping_method);

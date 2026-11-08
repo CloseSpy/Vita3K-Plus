@@ -6,6 +6,7 @@ on:
     branches:
       - mali-v2-upstream
       - mali-v3-snapshots
+      - mali-v4-diagnostics
 
 permissions:
   contents: read

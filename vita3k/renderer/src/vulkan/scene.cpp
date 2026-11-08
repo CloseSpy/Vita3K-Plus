@@ -604,6 +604,35 @@ void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format
 
     const bool vertex_stores = shader::emulates_vertex_stores(*context.record.vertex_program_binding->program(), context.state.features);
 
+    // One-shot, low-volume telemetry on Mali. It does not change GXM/Vulkan commands.
+    // Before trying a shader-store fix we must first prove that the game uses this path.
+    if (context.state.physical_device_properties.vendorID == 0x13B5) {
+        const SceGxmProgram &gxp = *context.record.vertex_program_binding->program();
+        const bool has_store = (gxp.program_flags & SCE_GXM_PROGRAM_FLAG_BUFFER_STORE) != 0;
+        const bool undefined_output = (gxp.program_flags & SCE_GXM_PROGRAM_FLAG_OUTPUT_UNDEFINED) != 0;
+        const size_t category = (has_store ? 1u : 0u) | (undefined_output ? 2u : 0u);
+        static thread_local std::array<std::set<Sha256Hash>, 4> sampled_programs;
+        static thread_local std::array<uint64_t, 4> category_draws{};
+        static thread_local uint64_t total_draws = 0;
+        static thread_local uint64_t emulated_draws = 0;
+        ++category_draws[category];
+        ++total_draws;
+        if (vertex_stores)
+            ++emulated_draws;
+
+        auto &sampled = sampled_programs[category];
+        const Sha256Hash &shader_hash = context.record.vertex_program_binding->vertex_program->hash;
+        if (sampled.size() < 12 && sampled.insert(shader_hash).second) {
+            LOG_INFO("[MALI-V4] unique vertex shader={} flags=0x{:X} store={} undef={} emulated={} category={} mappingEnabled={} slots={}",
+                hex_string(shader_hash).substr(0, 16), static_cast<uint32_t>(gxp.program_flags), has_store,
+                undefined_output, vertex_stores, category, context.state.features.enable_memory_mapping,
+                context.state.features.vertex_store_slots);
+        }
+        if (total_draws == 128 || total_draws == 512 || (total_draws % 2048) == 0)
+            LOG_INFO("[MALI-V4] {} draws: neither={} storeOnly={} undefOnly={} storeAndUndef={} emulated={}",
+                total_draws, category_draws[0], category_draws[1], category_draws[2], category_draws[3], emulated_draws);
+    }
+
     // do we need to check for a pipeline change?
     if (context.refresh_pipeline || type != context.last_primitive) {
         context.refresh_pipeline = false;
@@ -789,6 +818,12 @@ void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format
     }
     context.last_draw_pipeline = context.current_pipeline;
 
+    if (context.state.physical_device_properties.vendorID == 0x13B5 && context.vertex_store_draws > 0) {
+        static thread_local uint32_t draws_after_store = 0;
+        if (++draws_after_store <= 8)
+            LOG_INFO("[MALI-V4] draw before vertex-store renderpass-end barrier: pendingStoreDraws={} indexCount={} instances={} (possible consumer, not proven)",
+                context.vertex_store_draws, count, instance_count);
+    }
     context.render_cmd.drawIndexed(count, instance_count, 0, 0, 0);
 
     if (vertex_stores && context.vertex_store_pipeline) {
@@ -802,6 +837,12 @@ void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format
         context.render_cmd.setScissor(0, context.scissor);
         context.render_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, context.current_pipeline);
         context.vertex_store_draws++;
+        if (context.state.physical_device_properties.vendorID == 0x13B5) {
+            static thread_local uint32_t store_pass_samples = 0;
+            if (++store_pass_samples <= 8)
+                LOG_INFO("[MALI-V4] emulated vertex-store pass: indexCount={} instances={} pendingStoreDraws={}",
+                    count, instance_count, context.vertex_store_draws);
+        }
     }
 
     context.vertex_uniform_storage_allocated = false;

@@ -649,6 +649,11 @@ void VKContext::stop_render_pass() {
     in_renderpass = false;
 
     if (vertex_store_draws > 0) {
+        if (state.physical_device_properties.vendorID == 0x13B5) {
+            static thread_local uint32_t barrier_samples = 0;
+            if (++barrier_samples <= 8)
+                LOG_INFO("[MALI-V4] renderpass ended; vertex-store barrier inserted after {} store draws", vertex_store_draws);
+        }
         const vk::MemoryBarrier barrier{
             .srcAccessMask = vk::AccessFlagBits::eShaderWrite,
             .dstAccessMask = vk::AccessFlagBits::eVertexAttributeRead | vk::AccessFlagBits::eIndexRead | vk::AccessFlagBits::eUniformRead | vk::AccessFlagBits::eShaderRead
