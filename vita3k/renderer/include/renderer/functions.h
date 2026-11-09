@@ -98,7 +98,8 @@ void set_viewport_flat(State &state, Context *ctx);
 void set_region_clip(State &state, Context *ctx, SceGxmRegionClipMode mode, unsigned int xMin, unsigned int xMax, unsigned int yMin, unsigned int yMax);
 void set_two_sided_enable(State &state, Context *ctx, SceGxmTwoSidedMode mode);
 void set_side_fragment_program_enable(State &state, Context *ctx, const bool is_front, SceGxmFragmentProgramMode mode);
-void set_uniform_buffer(State &state, Context *ctx, const bool is_vertex_uniform, const int block_num, const std::uint16_t buffer_size, const Ptr<const void> buffer);
+void set_uniform_buffer(State &state, Context *ctx, const bool is_vertex_uniform, const int block_num, const std::uint16_t buffer_size, const Ptr<const void> buffer,
+    uint64_t v6_fingerprint = 0);
 void set_visibility_buffer(State &state, Context *ctx, Ptr<uint32_t> visibility_address, uint32_t visibility_stride);
 void set_visibility_index(State &state, Context *ctx, bool enable, uint32_t index, bool is_increment);
 
@@ -112,7 +113,8 @@ void stream_snapshot_disable_for_program(uint32_t program_addr, uint32_t program
 bool stream_snapshot_disabled();
 void stream_snapshot_reset();
 void stream_snapshot_set_override(bool enabled);
-void draw(State &state, Context *ctx, SceGxmPrimitiveType prim_type, SceGxmIndexFormat index_type, Ptr<const void> index_data, const std::uint32_t index_count, const std::uint32_t instance_count);
+void draw(State &state, Context *ctx, SceGxmPrimitiveType prim_type, SceGxmIndexFormat index_type, Ptr<const void> index_data, const std::uint32_t index_count, const std::uint32_t instance_count,
+    uint32_t v6_index_fingerprint = 0);
 void transfer_copy(State &state, uint32_t colorKeyValue, uint32_t colorKeyMask, SceGxmTransferColorKeyMode colorKeyMode, const SceGxmTransferImage *images, SceGxmTransferType srcType, SceGxmTransferType destType);
 void transfer_downscale(State &state, const SceGxmTransferImage *src, const SceGxmTransferImage *dest);
 void transfer_fill(State &state, uint32_t fillColor, const SceGxmTransferImage *dest);
