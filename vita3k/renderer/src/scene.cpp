@@ -300,6 +300,7 @@ COMMAND(handle_draw) {
     const std::uint32_t count = helper.pop<const std::uint32_t>();
     const std::uint32_t instance_count = helper.pop<const std::uint32_t>();
     const uint64_t index_snapshot = helper.pop<uint64_t>();
+    const uint32_t v6_index_fingerprint = helper.pop<uint32_t>();
 
     switch (renderer.current_backend) {
     case Backend::OpenGL:
@@ -308,7 +309,7 @@ COMMAND(handle_draw) {
         break;
 
     case Backend::Vulkan:
-        vulkan::draw(*reinterpret_cast<vulkan::VKContext *>(render_context), type, format, indices.cast<void>(), count, instance_count, index_snapshot, mem, config);
+        vulkan::draw(*reinterpret_cast<vulkan::VKContext *>(render_context), type, format, indices.cast<void>(), count, instance_count, index_snapshot, v6_index_fingerprint, mem, config);
         break;
 
     default:
