@@ -20,6 +20,7 @@
 #include <renderer/driver_functions.h>
 #include <renderer/state.h>
 #include <renderer/types.h>
+#include <renderer/vertex_diagnostics.h>
 
 #include <renderer/gl/functions.h>
 #include <renderer/gl/state.h>
@@ -33,6 +34,7 @@
 #include <atomic>
 
 #include <util/align.h>
+#include <util/hash.h>
 #include <util/log.h>
 #include <util/tracy.h>
 
@@ -143,9 +145,31 @@ COMMAND_SET_STATE(uniform_buffer) {
     const bool is_vertex = helper.pop<bool>();
     const int block_num = helper.pop<int>();
     const std::uint32_t size = helper.pop<std::uint32_t>();
+    const uint64_t v6_uniform_fingerprint = helper.pop<uint64_t>();
 
     renderer::ShaderProgram *program = is_vertex ? static_cast<ShaderProgram *>(render_context->record.vertex_program_binding->vertex_program.get())
                                                  : static_cast<ShaderProgram *>(render_context->record.fragment_program_binding->fragment_program.get());
+
+    if (v6_uniform_fingerprint && is_vertex && renderer.current_backend == Backend::Vulkan) {
+        const auto &vk = *reinterpret_cast<vulkan::VKContext *>(render_context);
+        if (vk.state.physical_device_properties.vendorID == 0x13B5) {
+            uint64_t at_bind = 0;
+            uint64_t at_bind_again = 0;
+            const bool valid = renderer::vertex_diagnostics::fingerprint_guest(mem, data.address(), size, at_bind);
+            const bool valid_again = renderer::vertex_diagnostics::fingerprint_guest(mem, data.address(), size, at_bind_again);
+            const bool mismatch = valid && at_bind != v6_uniform_fingerprint;
+            static thread_local uint64_t sampled = 0;
+            static thread_local uint64_t mismatches = 0;
+            ++sampled;
+            mismatches += mismatch;
+            if (sampled <= 12 || (mismatch && mismatches <= 24) || (sampled % 512) == 0)
+                LOG_INFO("[MALI-V6-UNIFORM] shader={} block={} addr={:08X} len={} sample={} valid={} drawHash={:016X} bindHash={:016X} bindHash2={:016X} match={}",
+                    hex_string(program->hash).substr(0, 16), block_num, data.address(), size, sampled, valid && valid_again,
+                    v6_uniform_fingerprint, at_bind, at_bind_again, valid ? (mismatch ? "NO" : "yes") : "unavailable");
+            if ((sampled % 512) == 0)
+                LOG_INFO("[MALI-V6-UNIFORM] summary sampled={} mismatches={}", sampled, mismatches);
+        }
+    }
 
     switch (renderer.current_backend) {
     case Backend::OpenGL:
