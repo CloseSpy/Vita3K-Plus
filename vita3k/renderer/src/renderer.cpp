@@ -450,8 +450,11 @@ void set_vertex_stream(State &state, Context *ctx, const std::size_t index, cons
         static_cast<uint32_t>(index), static_cast<uint32_t>(data_len), static_cast<uint64_t>(~0ull), v5_fingerprint);
 }
 
-void draw(State &state, Context *ctx, SceGxmPrimitiveType prim_type, SceGxmIndexFormat index_type, Ptr<const void> index_data, const std::uint32_t index_count, const std::uint32_t instance_count) {
-    renderer::add_command(ctx, renderer::CommandOpcode::Draw, nullptr, prim_type, index_type, index_data, index_count, instance_count, static_cast<uint64_t>(~0ull));
+void draw(State &state, Context *ctx, SceGxmPrimitiveType prim_type, SceGxmIndexFormat index_type, Ptr<const void> index_data, const std::uint32_t index_count, const std::uint32_t instance_count,
+    const uint32_t v6_index_fingerprint) {
+    // Exactly 32 bytes: type(4), format(4), pointer(4), count(4), instances(4),
+    // legacy snapshot handle(8), and the V6 diagnostic fingerprint(4).
+    renderer::add_command(ctx, renderer::CommandOpcode::Draw, nullptr, prim_type, index_type, index_data, index_count, instance_count, static_cast<uint64_t>(~0ull), v6_index_fingerprint);
 }
 
 void transfer_copy(State &state, uint32_t colorKeyValue, uint32_t colorKeyMask, SceGxmTransferColorKeyMode colorKeyMode, const SceGxmTransferImage *images, SceGxmTransferType srcType, SceGxmTransferType destType) {
@@ -523,11 +526,12 @@ void destroy_render_target_during_shutdown(State &state, std::unique_ptr<RenderT
     rt.reset();
 }
 
-void set_uniform_buffer(State &state, Context *ctx, const bool is_vertex_uniform, const int block_number, const std::uint16_t block_size, const Ptr<const void> buffer) {
+void set_uniform_buffer(State &state, Context *ctx, const bool is_vertex_uniform, const int block_number, const std::uint16_t block_size, const Ptr<const void> buffer,
+    const uint64_t v6_fingerprint) {
     // Calculate the number of bytes
     std::uint32_t bytes_to_copy_and_pad = ((block_size + 15) / 16) * 16;
 
-    renderer::add_state_set_command(ctx, renderer::GXMState::UniformBuffer, buffer, is_vertex_uniform, block_number, bytes_to_copy_and_pad);
+    renderer::add_state_set_command(ctx, renderer::GXMState::UniformBuffer, buffer, is_vertex_uniform, block_number, bytes_to_copy_and_pad, v6_fingerprint);
 }
 
 void set_visibility_buffer(State &state, Context *ctx, Ptr<uint32_t> visibility_address, uint32_t visibility_stride) {
