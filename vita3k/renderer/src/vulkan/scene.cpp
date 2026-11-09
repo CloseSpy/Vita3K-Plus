@@ -471,7 +471,7 @@ static void draw_bounds(const VKContext &context, int32_t &x0, int32_t &y0, int3
 }
 
 void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format,
-    Ptr<void> indices, size_t count, uint32_t instance_count, uint64_t index_snapshot, MemState &mem, const Config &config) {
+    Ptr<void> indices, size_t count, uint32_t instance_count, uint64_t index_snapshot, const uint32_t v6_index_fingerprint, MemState &mem, const Config &config) {
     // the mask bit is not emulated here, so a mask-update program would just paint writing_mask over the whole target (gl/draw.cpp skips these too)
     if (!context.state.features.use_mask_bit && context.record.fragment_program_binding->is_maskupdate)
         return;
@@ -809,6 +809,26 @@ void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format
 
     uint32_t max_index = 0;
     const uint32_t index_bytes = static_cast<uint32_t>(index_size * count);
+    if (context.state.physical_device_properties.vendorID == 0x13B5 && v6_index_fingerprint) {
+        uint64_t bind_full = 0;
+        uint64_t bind_full_again = 0;
+        const bool valid = renderer::vertex_diagnostics::fingerprint_guest(mem, indices.address(), index_bytes, bind_full);
+        const bool valid_again = renderer::vertex_diagnostics::fingerprint_guest(mem, indices.address(), index_bytes, bind_full_again);
+        const uint32_t bind_hash = static_cast<uint32_t>(bind_full ^ (bind_full >> 32));
+        const uint32_t bind_hash_again = static_cast<uint32_t>(bind_full_again ^ (bind_full_again >> 32));
+        const bool mismatch = valid && bind_hash != v6_index_fingerprint;
+        static thread_local uint64_t sampled = 0;
+        static thread_local uint64_t mismatches = 0;
+        ++sampled;
+        mismatches += mismatch;
+        if (sampled <= 16 || (mismatch && mismatches <= 32) || (sampled % 512) == 0)
+            LOG_INFO("[MALI-V6-INDEX] shader={} prim={} indexFmt={} addr={:08X} len={} count={} sample={} valid={} drawHash={:08X} bindHash={:08X} bindHash2={:08X} match={}",
+                hex_string(context.record.vertex_program_binding->vertex_program->hash).substr(0, 16), static_cast<uint32_t>(type),
+                static_cast<uint32_t>(format), indices.address(), index_bytes, count, sampled, valid && valid_again,
+                v6_index_fingerprint, bind_hash, bind_hash_again, valid ? (mismatch ? "NO" : "yes") : "unavailable");
+        if ((sampled % 512) == 0)
+            LOG_INFO("[MALI-V6-INDEX] summary sampled={} mismatches={}", sampled, mismatches);
+    }
     // the game may already have reused its index memory so prefer the copy taken when the scene was kicked
     const uint8_t *index_copy = (use_memory_mapping || context.state.experimental_vertex_snapshots)
         ? renderer::stream_snapshot_get(index_snapshot, index_bytes)
