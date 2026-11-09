@@ -2499,7 +2499,28 @@ EXPORT(int, sceGxmDisplayQueueFinish) {
     return 0;
 }
 
-static void gxmSetUniformBuffers(renderer::State &state, GxmState &gxm, SceGxmContext *context, const SceGxmProgram &program, std::span<UniformBuffer> buffers, const UniformBufferSizes &sizes, const MemState &mem) {
+// V6 samples at jittered intervals to avoid always observing the same draw
+// within a frame. The instrumentation never alters draw data or rendering.
+static bool v6_sample_draw() {
+    static std::atomic<uint64_t> draws{ 0 };
+    const uint64_t n = ++draws;
+    const uint64_t jitter = (n * 0x9E3779B97F4A7C15ull) ^ (n >> 11) ^ (n >> 23);
+    return n <= 32 || (jitter & 4095) == 0;
+}
+
+static uint32_t v6_index_fingerprint(MemState &mem, const Ptr<const void> indices, const SceGxmIndexFormat format, const uint32_t count, const bool sample) {
+    if (!sample || !indices || !count)
+        return 0;
+    const size_t bytes = static_cast<size_t>(count) * (format == SCE_GXM_INDEX_FORMAT_U16 ? sizeof(uint16_t) : sizeof(uint32_t));
+    uint64_t hash = 0;
+    if (!renderer::vertex_diagnostics::fingerprint_guest(mem, indices.address(), bytes, hash))
+        return 0;
+    const uint32_t condensed = static_cast<uint32_t>(hash ^ (hash >> 32));
+    return condensed ? condensed : 1; // zero means unsampled in the renderer
+}
+
+static void gxmSetUniformBuffers(renderer::State &state, GxmState &gxm, SceGxmContext *context, const SceGxmProgram &program, std::span<UniformBuffer> buffers, const UniformBufferSizes &sizes, MemState &mem,
+    const bool v6_sample) {
     for (size_t i = 0; i < buffers.size(); i++) {
         if (!buffers[i] || sizes.at(i) == 0) {
             continue;
@@ -2527,7 +2548,13 @@ static void gxmSetUniformBuffers(renderer::State &state, GxmState &gxm, SceGxmCo
                 }
             }
         }
-        renderer::set_uniform_buffer(state, context->renderer.get(), !program.is_fragment(), i, bytes_to_copy, buffers[i]);
+        uint64_t v6_hash = 0;
+        if (v6_sample && !program.is_fragment()) {
+            const uint16_t serialized_size = static_cast<uint16_t>(bytes_to_copy);
+            const size_t padded_size = (static_cast<size_t>(serialized_size) + 15) & ~size_t(15);
+            renderer::vertex_diagnostics::fingerprint_guest(mem, buffers[i].address(), padded_size, v6_hash);
+        }
+        renderer::set_uniform_buffer(state, context->renderer.get(), !program.is_fragment(), i, bytes_to_copy, buffers[i], v6_hash);
     }
 }
 
@@ -2579,6 +2606,7 @@ static int gxmDrawElementGeneral(EmuEnvState &emuenv, const char *export_name, c
     // Set uniforms
     const SceGxmProgram &vertex_program_gxp = *gxm_vertex_program.program.get(emuenv.mem);
     const SceGxmProgram &fragment_program_gxp = *gxm_fragment_program.program.get(emuenv.mem);
+    const bool v6_sample = v6_sample_draw();
 
     const void *indices_ptr = indexData.get(emuenv.mem);
 
@@ -2590,9 +2618,9 @@ static int gxmDrawElementGeneral(EmuEnvState &emuenv, const char *export_name, c
         : std::span(context->state.fragment_uniform_buffers);
 
     gxmSetUniformBuffers(*emuenv.renderer, emuenv.gxm, context, vertex_program_gxp, vert_buffers, gxm_vertex_program.renderer_data->uniform_buffer_sizes,
-        emuenv.mem);
+        emuenv.mem, v6_sample);
     gxmSetUniformBuffers(*emuenv.renderer, emuenv.gxm, context, fragment_program_gxp, frag_buffers, gxm_fragment_program.renderer_data->uniform_buffer_sizes,
-        emuenv.mem);
+        emuenv.mem, false);
 
     if (context->last_precomputed || pre_vert || pre_frag) {
         // Need to re-set the data
@@ -2669,7 +2697,8 @@ static int gxmDrawElementGeneral(EmuEnvState &emuenv, const char *export_name, c
         }
     }
 
-    renderer::draw(*emuenv.renderer, context->renderer.get(), primType, indexType, indexData, indexCount, instanceCount);
+    renderer::draw(*emuenv.renderer, context->renderer.get(), primType, indexType, indexData, indexCount, instanceCount,
+        v6_index_fingerprint(emuenv.mem, indexData, indexType, indexCount, v6_sample));
 
     // increase the ringbuffer position if a default vertex or fragment buffer was reserved, we know the new position will fit in the ringbuffer
     if (context->was_vert_default_uniform_reserved) {
@@ -2744,15 +2773,16 @@ EXPORT(int, sceGxmDrawPrecomputed, SceGxmContext *context, SceGxmPrecomputedDraw
     // Set uniforms
     const SceGxmProgram &vertex_program_gxp = *vertex_program->program.get(emuenv.mem);
     const SceGxmProgram &fragment_program_gxp = *fragment_program->program.get(emuenv.mem);
+    const bool v6_sample = v6_sample_draw();
 
     std::span<UniformBuffer> vertex_buffers = vertex_state && vertex_state->uniform_buffers ? std::span(vertex_state->uniform_buffers.get(emuenv.mem), std::min<size_t>(vertex_state->buffer_count, vertex_program->renderer_data->uniform_buffer_sizes.size())) : context->state.vertex_uniform_buffers;
     std::span<UniformBuffer> fragment_buffers = fragment_state && fragment_state->uniform_buffers ? std::span(fragment_state->uniform_buffers.get(emuenv.mem), std::min<size_t>(fragment_state->buffer_count, fragment_program->renderer_data->uniform_buffer_sizes.size())) : context->state.fragment_uniform_buffers;
 
     gxmSetUniformBuffers(*emuenv.renderer, emuenv.gxm, context, vertex_program_gxp, vertex_buffers, vertex_program->renderer_data->uniform_buffer_sizes,
-        emuenv.mem);
+        emuenv.mem, v6_sample);
 
     gxmSetUniformBuffers(*emuenv.renderer, emuenv.gxm, context, fragment_program_gxp, fragment_buffers, fragment_program->renderer_data->uniform_buffer_sizes,
-        emuenv.mem);
+        emuenv.mem, false);
 
     // Update vertex data. We should stores a copy of the data to pass it to GPU later, since another scene
     // may start to overwrite stuff when this scene is being processed in our queue (in case of OpenGL).
@@ -2817,7 +2847,8 @@ EXPORT(int, sceGxmDrawPrecomputed, SceGxmContext *context, SceGxmPrecomputedDraw
         }
     }
 
-    renderer::draw(*emuenv.renderer, context->renderer.get(), draw->type, draw->index_format, draw->index_data, draw->vertex_count, draw->instance_count);
+    renderer::draw(*emuenv.renderer, context->renderer.get(), draw->type, draw->index_format, draw->index_data, draw->vertex_count, draw->instance_count,
+        v6_index_fingerprint(emuenv.mem, draw->index_data, draw->index_format, draw->vertex_count, v6_sample));
 
     // increase the ringbuffer position if a default vertex or fragment buffer was reserved, we know the new position will fit in the ringbuffer
     // also even in a precomputed draw, this is needed as some parts of the pipeline can be not precomputed
