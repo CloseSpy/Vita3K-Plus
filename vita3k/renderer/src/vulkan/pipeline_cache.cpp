@@ -1219,6 +1219,14 @@ vk::PipelineVertexInputStateCreateInfo PipelineCache::get_vertex_input_state(con
 
     // Vertex attributes.
     VertexProgram *vkvert = vertex_program.vertex_program.get();
+    // Record the actual Vulkan fetch format, not just the original Vita enum.
+    // A missing Mali vertex-buffer feature would suggest a format-conversion
+    // issue rather than a guest uniform-buffer lifetime issue.
+    static thread_local std::set<std::string> v61_seen_formats;
+    const std::string v61_shader = hex_string(vkvert->hash).substr(0, 16);
+    const bool v61_log_formats = state.physical_device_properties.vendorID == 0x13B5
+        && (v61_shader == "2a08ad68c5bb3d08" || v61_seen_formats.size() < 64)
+        && v61_seen_formats.insert(v61_shader).second;
 
     uint32_t used_streams = 0;
     for (const SceGxmVertexAttribute &attribute : vertex_program.attributes) {
@@ -1248,6 +1256,17 @@ vk::PipelineVertexInputStateCreateInfo PipelineCache::get_vertex_input_state(con
 
         const shader::usse::AttributeInformation &info = vkvert->attribute_infos.at(attribute.regIndex);
         const AttributeFetch fetch = attribute_fetch(attribute, info, support_scaled_vertex_attribute, unsupported_rgb_vertex_attribute_formats);
+
+        if (v61_log_formats) {
+            const vk::FormatProperties props = state.physical_device.getFormatProperties(fetch.format);
+            const bool supported = static_cast<bool>(props.bufferFeatures & vk::FormatFeatureFlagBits::eVertexBuffer);
+            LOG_INFO("[MALI-V61-FORMAT] shader={} reg={} location={} stream={} sourceFmt={} sourceComponents={} regFmt={} shaderType={} shaderComponents={} isInteger={} isSigned={} vkFormat={} bufferFeatures={:08X} supported={} array={} elementSize={} componentSize={}",
+                v61_shader, attribute.regIndex, info.location, attribute.streamIndex,
+                static_cast<uint32_t>(attribute.format), attribute.componentCount, info.regformat,
+                static_cast<uint32_t>(info.gxm_type), info.component_count, info.is_integer, info.is_signed,
+                static_cast<int>(fetch.format), static_cast<uint32_t>(static_cast<VkFormatFeatureFlags>(props.bufferFeatures)),
+                supported, fetch.array_size, fetch.array_element_size, fetch.component_size);
+        }
 
         uint32_t binding = attribute.streamIndex;
         if (attribute_bindings) {

@@ -32,6 +32,9 @@
 
 #include <array>
 #include <atomic>
+#include <algorithm>
+#include <map>
+#include <string>
 
 #include <util/align.h>
 #include <util/hash.h>
@@ -145,31 +148,31 @@ COMMAND_SET_STATE(uniform_buffer) {
     const bool is_vertex = helper.pop<bool>();
     const int block_num = helper.pop<int>();
     const std::uint32_t size = helper.pop<std::uint32_t>();
-    const uint64_t v6_uniform_fingerprint = helper.pop<uint64_t>();
+    const uint64_t v61_hashes = helper.pop<uint64_t>();
+    const uint32_t v61_sample_metadata = helper.pop<uint32_t>();
 
     renderer::ShaderProgram *program = is_vertex ? static_cast<ShaderProgram *>(render_context->record.vertex_program_binding->vertex_program.get())
                                                  : static_cast<ShaderProgram *>(render_context->record.fragment_program_binding->fragment_program.get());
 
-    if (v6_uniform_fingerprint && is_vertex && renderer.current_backend == Backend::Vulkan) {
-        const auto &vk = *reinterpret_cast<vulkan::VKContext *>(render_context);
-        if (vk.state.physical_device_properties.vendorID == 0x13B5) {
-            uint64_t at_bind = 0;
-            uint64_t at_bind_again = 0;
-            const bool valid = renderer::vertex_diagnostics::fingerprint_guest(mem, data.address(), size, at_bind);
-            const bool valid_again = renderer::vertex_diagnostics::fingerprint_guest(mem, data.address(), size, at_bind_again);
-            const bool mismatch = valid && at_bind != v6_uniform_fingerprint;
-            static thread_local uint64_t sampled = 0;
-            static thread_local uint64_t mismatches = 0;
-            ++sampled;
-            mismatches += mismatch;
-            if (sampled <= 12 || (mismatch && mismatches <= 24) || (sampled % 512) == 0)
-                LOG_INFO("[MALI-V6-UNIFORM] shader={} block={} addr={:08X} len={} sample={} valid={} drawHash={:016X} bindHash={:016X} bindHash2={:016X} match={}",
-                    hex_string(program->hash).substr(0, 16), block_num, data.address(), size, sampled, valid && valid_again,
-                    v6_uniform_fingerprint, at_bind, at_bind_again, valid ? (mismatch ? "NO" : "yes") : "unavailable");
-            if ((sampled % 512) == 0)
-                LOG_INFO("[MALI-V6-UNIFORM] summary sampled={} mismatches={}", sampled, mismatches);
-        }
-    }
+    // V6.1: only compare the bytes actually consumed by the Vulkan uniform
+    // upload. Keep a separate checksum of the optional 0..15 padding bytes.
+    // An 8-byte default uniform immediately followed by another 8-byte
+    // allocation is otherwise a guaranteed source of false positives.
+    const uint32_t real_bytes = v61_sample_metadata & 0xFFFFu;
+    const bool tail_draw_valid = (v61_sample_metadata & (1u << 16)) != 0;
+    const bool mali_sample = real_bytes && is_vertex && renderer.current_backend == Backend::Vulkan
+        && reinterpret_cast<vulkan::VKContext *>(render_context)->state.physical_device_properties.vendorID == 0x13B5;
+    const uint32_t gpu_bytes = mali_sample
+        ? std::min<uint32_t>(size, program->uniform_buffer_sizes.at(block_num) * 4)
+        : 0;
+    const bool active = mali_sample && program->uniform_buffer_data_offsets.at(block_num) != UINT32_MAX;
+    const uint32_t tail_bytes = real_bytes <= size ? size - real_bytes : 0;
+    uint64_t bind_real = 0;
+    uint64_t bind_tail = 0;
+    const bool real_bind_valid = active && gpu_bytes == real_bytes
+        && renderer::vertex_diagnostics::fingerprint_guest(mem, data.address(), real_bytes, bind_real);
+    const bool tail_bind_valid = active && tail_draw_valid && tail_bytes > 0
+        && renderer::vertex_diagnostics::fingerprint_guest(mem, data.address() + real_bytes, tail_bytes, bind_tail);
 
     switch (renderer.current_backend) {
     case Backend::OpenGL:
@@ -183,6 +186,59 @@ COMMAND_SET_STATE(uniform_buffer) {
     default:
         REPORT_MISSING(renderer.current_backend);
         return;
+    }
+
+    if (mali_sample) {
+        const auto fold = [](const uint64_t hash) { return static_cast<uint32_t>(hash ^ (hash >> 32)); };
+        uint64_t after_real = 0;
+        const bool after_valid = real_bind_valid
+            && renderer::vertex_diagnostics::fingerprint_guest(mem, data.address(), real_bytes, after_real);
+        const bool real_mismatch = real_bind_valid && fold(bind_real) != static_cast<uint32_t>(v61_hashes);
+        // Only classify a tail as padding if it is definitely not uploaded.
+        const bool tail_checked = tail_bind_valid && gpu_bytes == real_bytes;
+        const bool tail_mismatch = tail_checked && fold(bind_tail) != static_cast<uint32_t>(v61_hashes >> 32);
+        const bool unstable = real_bind_valid && (!after_valid || bind_real != after_real);
+        const bool size_mismatch = !active || gpu_bytes != real_bytes;
+
+        struct Counts {
+            uint64_t samples = 0;
+            uint64_t real_mismatches = 0;
+            uint64_t tail_mismatches = 0;
+            uint64_t size_mismatches = 0;
+            uint64_t unstable_reads = 0;
+            uint64_t invalid_reads = 0;
+        };
+        static thread_local std::map<std::pair<std::string, int>, Counts> counts_by_shader;
+        static thread_local uint64_t total_samples = 0;
+        static thread_local uint64_t total_real_mismatches = 0;
+        static thread_local uint64_t total_tail_mismatches = 0;
+        static thread_local uint64_t total_size_mismatches = 0;
+        const std::string shader = hex_string(program->hash).substr(0, 16);
+        Counts &counts = counts_by_shader[{ shader, block_num }];
+        ++counts.samples;
+        ++total_samples;
+        counts.real_mismatches += real_mismatch;
+        counts.tail_mismatches += tail_mismatch;
+        counts.size_mismatches += size_mismatch;
+        counts.unstable_reads += unstable;
+        counts.invalid_reads += active && !real_bind_valid && !size_mismatch;
+        total_real_mismatches += real_mismatch;
+        total_tail_mismatches += tail_mismatch;
+        total_size_mismatches += size_mismatch;
+
+        if ((counts.samples <= 3 && counts_by_shader.size() <= 64)
+            || (real_mismatch && counts.real_mismatches <= 8) || counts.samples % 256 == 0) {
+            LOG_INFO("[MALI-V61-UNIFORM] shader={} block={} addr={:08X} sample={} real={} gpu={} padded={} mapping={} realMatch={} tailMatch={} stable={} totals(real={},tail={},size={},unstable={},invalid={})",
+                shader, block_num, data.address(), counts.samples, real_bytes, gpu_bytes, size,
+                reinterpret_cast<vulkan::VKContext *>(render_context)->state.features.enable_memory_mapping,
+                size_mismatch ? "SIZE_MISMATCH" : !real_bind_valid ? "INVALID" : real_mismatch ? "NO" : "yes",
+                !tail_checked ? "n/a" : tail_mismatch ? "NO" : "yes",
+                !real_bind_valid ? "n/a" : unstable ? "NO" : "yes",
+                counts.real_mismatches, counts.tail_mismatches, counts.size_mismatches, counts.unstable_reads, counts.invalid_reads);
+        }
+        if (total_samples % 512 == 0)
+            LOG_INFO("[MALI-V61-UNIFORM] summary sampled={} realMismatches={} tailMismatches={} sizeMismatches={} distinctShaderBlocks={}",
+                total_samples, total_real_mismatches, total_tail_mismatches, total_size_mismatches, counts_by_shader.size());
     }
 
     const auto offset = program->uniform_buffer_data_offsets.at(block_num);

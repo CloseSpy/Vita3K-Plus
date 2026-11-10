@@ -99,7 +99,7 @@ void set_region_clip(State &state, Context *ctx, SceGxmRegionClipMode mode, unsi
 void set_two_sided_enable(State &state, Context *ctx, SceGxmTwoSidedMode mode);
 void set_side_fragment_program_enable(State &state, Context *ctx, const bool is_front, SceGxmFragmentProgramMode mode);
 void set_uniform_buffer(State &state, Context *ctx, const bool is_vertex_uniform, const int block_num, const std::uint16_t buffer_size, const Ptr<const void> buffer,
-    uint64_t v6_fingerprint = 0);
+    uint64_t v61_hashes = 0, uint32_t v61_sample_metadata = 0);
 void set_visibility_buffer(State &state, Context *ctx, Ptr<uint32_t> visibility_address, uint32_t visibility_stride);
 void set_visibility_index(State &state, Context *ctx, bool enable, uint32_t index, bool is_increment);
 
