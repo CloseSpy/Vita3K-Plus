@@ -30,9 +30,9 @@
 #include <renderer/vulkan/state.h>
 #include <renderer/vulkan/types.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
-#include <algorithm>
 #include <map>
 #include <string>
 
@@ -226,14 +226,22 @@ COMMAND_SET_STATE(uniform_buffer) {
         total_tail_mismatches += tail_mismatch;
         total_size_mismatches += size_mismatch;
 
+        const char *real_status = "yes";
+        if (size_mismatch)
+            real_status = "SIZE_MISMATCH";
+        else if (!real_bind_valid)
+            real_status = "INVALID";
+        else if (real_mismatch)
+            real_status = "NO";
+        const char *tail_status = !tail_checked ? "n/a" : (tail_mismatch ? "NO" : "yes");
+        const char *stable_status = !real_bind_valid ? "n/a" : (unstable ? "NO" : "yes");
+
         if ((counts.samples <= 3 && counts_by_shader.size() <= 64)
             || (real_mismatch && counts.real_mismatches <= 8) || counts.samples % 256 == 0) {
             LOG_INFO("[MALI-V61-UNIFORM] shader={} block={} addr={:08X} sample={} real={} gpu={} padded={} mapping={} realMatch={} tailMatch={} stable={} totals(real={},tail={},size={},unstable={},invalid={})",
                 shader, block_num, data.address(), counts.samples, real_bytes, gpu_bytes, size,
                 reinterpret_cast<vulkan::VKContext *>(render_context)->state.features.enable_memory_mapping,
-                size_mismatch ? "SIZE_MISMATCH" : !real_bind_valid ? "INVALID" : real_mismatch ? "NO" : "yes",
-                !tail_checked ? "n/a" : tail_mismatch ? "NO" : "yes",
-                !real_bind_valid ? "n/a" : unstable ? "NO" : "yes",
+                real_status, tail_status, stable_status,
                 counts.real_mismatches, counts.tail_mismatches, counts.size_mismatches, counts.unstable_reads, counts.invalid_reads);
         }
         if (total_samples % 512 == 0)
