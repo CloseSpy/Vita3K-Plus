@@ -60,6 +60,12 @@ void destroy_command_payload(Command &cmd) {
         if (state == GXMState::Program) {
             helper.pop<Ptr<void>>();
             delete helper.pop<std::shared_ptr<ProgramBinding> *>();
+        } else if (state == GXMState::UniformBuffer) {
+            helper.pop<Ptr<const void>>();
+            helper.pop<bool>();
+            helper.pop<int>();
+            helper.pop<std::uint32_t>();
+            delete helper.pop<std::vector<uint8_t> *>();
         }
         break;
     }
@@ -94,13 +100,26 @@ void append_command_list(Context &destination, const CommandList &source) {
             payload.push(color_surface_copy);
             payload.push(depth_stencil_surface_copy);
             payload.push(store_depth_stencil_surface_copy);
-        } else if (copy->opcode == CommandOpcode::SetState && payload.pop<GXMState>() == GXMState::Program) {
-            payload.pop<Ptr<void>>();
-            const std::uint32_t binding_at = payload.point;
-            const std::shared_ptr<ProgramBinding> *binding = payload.pop<std::shared_ptr<ProgramBinding> *>();
-            std::shared_ptr<ProgramBinding> *binding_copy = binding ? new std::shared_ptr<ProgramBinding>(*binding) : nullptr;
-            payload.point = binding_at;
-            payload.push(binding_copy);
+        } else if (copy->opcode == CommandOpcode::SetState) {
+            const GXMState state = payload.pop<GXMState>();
+            if (state == GXMState::Program) {
+                payload.pop<Ptr<void>>();
+                const std::uint32_t binding_at = payload.point;
+                const std::shared_ptr<ProgramBinding> *binding = payload.pop<std::shared_ptr<ProgramBinding> *>();
+                std::shared_ptr<ProgramBinding> *binding_copy = binding ? new std::shared_ptr<ProgramBinding>(*binding) : nullptr;
+                payload.point = binding_at;
+                payload.push(binding_copy);
+            } else if (state == GXMState::UniformBuffer) {
+                payload.pop<Ptr<const void>>();
+                payload.pop<bool>();
+                payload.pop<int>();
+                payload.pop<std::uint32_t>();
+                const std::uint32_t snapshot_at = payload.point;
+                const auto *snapshot = payload.pop<std::vector<uint8_t> *>();
+                auto *snapshot_copy = snapshot ? new std::vector<uint8_t>(*snapshot) : nullptr;
+                payload.point = snapshot_at;
+                payload.push(snapshot_copy);
+            }
         }
 
         if (destination.command_list.last)
