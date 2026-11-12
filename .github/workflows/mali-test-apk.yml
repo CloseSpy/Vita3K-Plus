@@ -10,6 +10,7 @@ on:
       - mali-v5-vertex-diagnostics
       - mali-v6-index-uniform-diagnostics
       - mali-v61-uniform-measurement
+      - mali-v7-uniform-snapshot
 
 permissions:
   contents: read
@@ -60,6 +61,6 @@ jobs:
       - name: Upload unsigned-for-release, debug-signed APK
         uses: actions/upload-artifact@v7
         with:
-          name: vita3k-mali-v61-measurement-apk
+          name: vita3k-mali-v7-snapshot-apk
           path: artifacts/mali-test/app.apk
           if-no-files-found: error
