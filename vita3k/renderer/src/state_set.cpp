@@ -35,6 +35,7 @@
 #include <atomic>
 #include <map>
 #include <string>
+#include <vector>
 
 #include <util/align.h>
 #include <util/hash.h>
@@ -148,31 +149,18 @@ COMMAND_SET_STATE(uniform_buffer) {
     const bool is_vertex = helper.pop<bool>();
     const int block_num = helper.pop<int>();
     const std::uint32_t size = helper.pop<std::uint32_t>();
-    const uint64_t v61_hashes = helper.pop<uint64_t>();
-    const uint32_t v61_sample_metadata = helper.pop<uint32_t>();
+    auto *v7_snapshot = helper.pop<std::vector<uint8_t> *>();
 
     renderer::ShaderProgram *program = is_vertex ? static_cast<ShaderProgram *>(render_context->record.vertex_program_binding->vertex_program.get())
                                                  : static_cast<ShaderProgram *>(render_context->record.fragment_program_binding->fragment_program.get());
 
-    // V6.1: only compare the bytes actually consumed by the Vulkan uniform
-    // upload. Keep a separate checksum of the optional 0..15 padding bytes.
-    // An 8-byte default uniform immediately followed by another 8-byte
-    // allocation is otherwise a guaranteed source of false positives.
-    const uint32_t real_bytes = v61_sample_metadata & 0xFFFFu;
-    const bool tail_draw_valid = (v61_sample_metadata & (1u << 16)) != 0;
-    const bool mali_sample = real_bytes && is_vertex && renderer.current_backend == Backend::Vulkan
-        && reinterpret_cast<vulkan::VKContext *>(render_context)->state.physical_device_properties.vendorID == 0x13B5;
-    const uint32_t gpu_bytes = mali_sample
-        ? std::min<uint32_t>(size, program->uniform_buffer_sizes.at(block_num) * 4)
-        : 0;
-    const bool active = mali_sample && program->uniform_buffer_data_offsets.at(block_num) != UINT32_MAX;
-    const uint32_t tail_bytes = real_bytes <= size ? size - real_bytes : 0;
-    uint64_t bind_real = 0;
-    uint64_t bind_tail = 0;
-    const bool real_bind_valid = active && gpu_bytes == real_bytes
-        && renderer::vertex_diagnostics::fingerprint_guest(mem, data.address(), real_bytes, bind_real);
-    const bool tail_bind_valid = active && tail_draw_valid && tail_bytes > 0
-        && renderer::vertex_diagnostics::fingerprint_guest(mem, data.address() + real_bytes, tail_bytes, bind_tail);
+    // Controlled A/B: only this MK9 shader/block on Mali with mapping off.
+    const bool mali_vulkan = renderer.current_backend == Backend::Vulkan
+        && reinterpret_cast<vulkan::VKContext *>(render_context)->state.physical_device_properties.vendorID == 0x13B5
+        && !reinterpret_cast<vulkan::VKContext *>(render_context)->state.features.enable_memory_mapping;
+    const bool v7_target = mali_vulkan && is_vertex && block_num == 2 && size == 3456
+        && hex_string(program->hash).substr(0, 16) == "fc685e0d678c3d4e";
+    const bool v7_apply = v7_target && v7_snapshot && v7_snapshot->size() == 3456;
 
     switch (renderer.current_backend) {
     case Backend::OpenGL:
@@ -180,7 +168,8 @@ COMMAND_SET_STATE(uniform_buffer) {
         break;
 
     case Backend::Vulkan:
-        vulkan::set_uniform_buffer(*reinterpret_cast<vulkan::VKContext *>(render_context), mem, program, is_vertex, block_num, size, data);
+        vulkan::set_uniform_buffer(*reinterpret_cast<vulkan::VKContext *>(render_context), mem, program, is_vertex, block_num, size, data,
+            v7_apply ? v7_snapshot->data() : nullptr);
         break;
 
     default:
@@ -188,66 +177,18 @@ COMMAND_SET_STATE(uniform_buffer) {
         return;
     }
 
-    if (mali_sample) {
-        const auto fold = [](const uint64_t hash) { return static_cast<uint32_t>(hash ^ (hash >> 32)); };
-        uint64_t after_real = 0;
-        const bool after_valid = real_bind_valid
-            && renderer::vertex_diagnostics::fingerprint_guest(mem, data.address(), real_bytes, after_real);
-        const bool real_mismatch = real_bind_valid && fold(bind_real) != static_cast<uint32_t>(v61_hashes);
-        // Only classify a tail as padding if it is definitely not uploaded.
-        const bool tail_checked = tail_bind_valid && gpu_bytes == real_bytes;
-        const bool tail_mismatch = tail_checked && fold(bind_tail) != static_cast<uint32_t>(v61_hashes >> 32);
-        const bool unstable = real_bind_valid && (!after_valid || bind_real != after_real);
-        const bool size_mismatch = !active || gpu_bytes != real_bytes;
-
-        struct Counts {
-            uint64_t samples = 0;
-            uint64_t real_mismatches = 0;
-            uint64_t tail_mismatches = 0;
-            uint64_t size_mismatches = 0;
-            uint64_t unstable_reads = 0;
-            uint64_t invalid_reads = 0;
-        };
-        static thread_local std::map<std::pair<std::string, int>, Counts> counts_by_shader;
-        static thread_local uint64_t total_samples = 0;
-        static thread_local uint64_t total_real_mismatches = 0;
-        static thread_local uint64_t total_tail_mismatches = 0;
-        static thread_local uint64_t total_size_mismatches = 0;
-        const std::string shader = hex_string(program->hash).substr(0, 16);
-        Counts &counts = counts_by_shader[{ shader, block_num }];
-        ++counts.samples;
-        ++total_samples;
-        counts.real_mismatches += real_mismatch;
-        counts.tail_mismatches += tail_mismatch;
-        counts.size_mismatches += size_mismatch;
-        counts.unstable_reads += unstable;
-        counts.invalid_reads += active && !real_bind_valid && !size_mismatch;
-        total_real_mismatches += real_mismatch;
-        total_tail_mismatches += tail_mismatch;
-        total_size_mismatches += size_mismatch;
-
-        const char *real_status = "yes";
-        if (size_mismatch)
-            real_status = "SIZE_MISMATCH";
-        else if (!real_bind_valid)
-            real_status = "INVALID";
-        else if (real_mismatch)
-            real_status = "NO";
-        const char *tail_status = !tail_checked ? "n/a" : (tail_mismatch ? "NO" : "yes");
-        const char *stable_status = !real_bind_valid ? "n/a" : (unstable ? "NO" : "yes");
-
-        if ((counts.samples <= 3 && counts_by_shader.size() <= 64)
-            || (real_mismatch && counts.real_mismatches <= 8) || counts.samples % 256 == 0) {
-            LOG_INFO("[MALI-V61-UNIFORM] shader={} block={} addr={:08X} sample={} real={} gpu={} padded={} mapping={} realMatch={} tailMatch={} stable={} totals(real={},tail={},size={},unstable={},invalid={})",
-                shader, block_num, data.address(), counts.samples, real_bytes, gpu_bytes, size,
-                reinterpret_cast<vulkan::VKContext *>(render_context)->state.features.enable_memory_mapping,
-                real_status, tail_status, stable_status,
-                counts.real_mismatches, counts.tail_mismatches, counts.size_mismatches, counts.unstable_reads, counts.invalid_reads);
-        }
-        if (total_samples % 512 == 0)
-            LOG_INFO("[MALI-V61-UNIFORM] summary sampled={} realMismatches={} tailMismatches={} sizeMismatches={} distinctShaderBlocks={}",
-                total_samples, total_real_mismatches, total_tail_mismatches, total_size_mismatches, counts_by_shader.size());
+    if (v7_target) {
+        static thread_local uint64_t targeted = 0;
+        static thread_local uint64_t applied = 0;
+        ++targeted;
+        applied += v7_apply ? 1 : 0;
+        if (targeted <= 8 || (targeted % 512) == 0)
+            LOG_INFO("[MALI-V7-SNAPSHOT] shader=fc685e0d678c3d4e block=2 size=3456 applied={} targetedTotal={} appliedTotal={} mapping=disabled",
+                v7_apply, targeted, applied);
     }
+    // Keep the snapshot alive for macro-tile replays until the last pass.
+    if (!(helper.cmd->flags & Command::FLAG_NO_FREE))
+        delete v7_snapshot;
 
     const auto offset = program->uniform_buffer_data_offsets.at(block_num);
     if (offset != static_cast<uint32_t>(-1) && config.log_active_shaders) {
