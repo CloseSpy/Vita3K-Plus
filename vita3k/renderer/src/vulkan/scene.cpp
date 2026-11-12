@@ -72,7 +72,7 @@ static void copy_uniform_slack(VKContext &context, MemState &mem, const Address 
     memcpy(mirror + declared, guest + declared, static_cast<size_t>(end - address - declared));
 }
 
-void set_uniform_buffer(VKContext &context, MemState &mem, const ShaderProgram *program, const bool vertex_shader, const int block_num, const int size, Ptr<uint8_t> data) {
+void set_uniform_buffer(VKContext &context, MemState &mem, const ShaderProgram *program, const bool vertex_shader, const int block_num, const int size, Ptr<uint8_t> data, const uint8_t *snapshot) {
     auto offset = program->uniform_buffer_data_offsets.at(block_num);
     if (offset == static_cast<std::uint32_t>(-1)) {
         return;
@@ -107,7 +107,7 @@ void set_uniform_buffer(VKContext &context, MemState &mem, const ShaderProgram *
                 context.vertex_uniform_storage_allocated = true;
             }
 
-            context.vertex_uniform_stream_ring_buffer.copy(context.prerender_cmd, data_size_upload, data.get(mem), offset_start_upload);
+            context.vertex_uniform_stream_ring_buffer.copy(context.prerender_cmd, data_size_upload, snapshot ? snapshot : data.get(mem), offset_start_upload);
         } else {
             if (!context.fragment_uniform_storage_allocated) {
                 // Allocate a region for it. Don't worry though, when the shader program is changed
@@ -115,7 +115,7 @@ void set_uniform_buffer(VKContext &context, MemState &mem, const ShaderProgram *
                 context.fragment_uniform_storage_allocated = true;
             }
 
-            context.fragment_uniform_stream_ring_buffer.copy(context.prerender_cmd, data_size_upload, data.get(mem), offset_start_upload);
+            context.fragment_uniform_stream_ring_buffer.copy(context.prerender_cmd, data_size_upload, snapshot ? snapshot : data.get(mem), offset_start_upload);
         }
     }
 }
