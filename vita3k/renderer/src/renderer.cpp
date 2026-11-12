@@ -527,13 +527,14 @@ void destroy_render_target_during_shutdown(State &state, std::unique_ptr<RenderT
 }
 
 void set_uniform_buffer(State &state, Context *ctx, const bool is_vertex_uniform, const int block_number, const std::uint16_t block_size, const Ptr<const void> buffer,
-    const uint64_t v61_hashes, const uint32_t v61_sample_metadata) {
+    std::vector<uint8_t> *v7_snapshot) {
     // Calculate the number of bytes
     std::uint32_t bytes_to_copy_and_pad = ((block_size + 15) / 16) * 16;
 
-    // 4 (state) + 4 (guest pointer) + 1 + 4 + 4 + 8 + 4 = 29 bytes,
-    // below the 32-byte fixed command payload limit.
-    renderer::add_state_set_command(ctx, renderer::GXMState::UniformBuffer, buffer, is_vertex_uniform, block_number, bytes_to_copy_and_pad, v61_hashes, v61_sample_metadata);
+    // 4 (state) + 4 (guest pointer) + 1 + 4 + 4 + 8 (snapshot) = 25 bytes.
+    // Ownership moves to the queued command; reclaim on enqueue failure.
+    if (!renderer::add_state_set_command(ctx, renderer::GXMState::UniformBuffer, buffer, is_vertex_uniform, block_number, bytes_to_copy_and_pad, v7_snapshot))
+        delete v7_snapshot;
 }
 
 void set_visibility_buffer(State &state, Context *ctx, Ptr<uint32_t> visibility_address, uint32_t visibility_stride) {
