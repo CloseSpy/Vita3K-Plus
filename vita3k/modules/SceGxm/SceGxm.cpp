@@ -2548,26 +2548,20 @@ static void gxmSetUniformBuffers(renderer::State &state, GxmState &gxm, SceGxmCo
                 }
             }
         }
-        uint64_t v61_hashes = 0;
-        uint32_t v61_sample_metadata = 0;
-        if (v6_sample && !program.is_fragment()) {
-            // The renderer serializes this length as uint16_t. Measure only the
-            // bytes that the command can actually request, not the 16-byte
-            // padding that may belong to the next ring-buffer allocation.
-            const uint16_t serialized_size = static_cast<uint16_t>(bytes_to_copy);
-            const size_t padded_size = (static_cast<size_t>(serialized_size) + 15) & ~size_t(15);
-            uint64_t real_hash = 0;
-            if (serialized_size && renderer::vertex_diagnostics::fingerprint_guest(mem, buffers[i].address(), serialized_size, real_hash)) {
-                v61_sample_metadata = serialized_size;
-                const auto fold = [](const uint64_t hash) { return static_cast<uint32_t>(hash ^ (hash >> 32)); };
-                uint64_t tail_hash = 0;
-                if (padded_size > serialized_size
-                    && renderer::vertex_diagnostics::fingerprint_guest(mem, buffers[i].address() + serialized_size, padded_size - serialized_size, tail_hash))
-                    v61_sample_metadata |= 1u << 16; // tail hash is valid
-                v61_hashes = (static_cast<uint64_t>(fold(tail_hash)) << 32) | fold(real_hash);
+        // V7 A/B: capture the 3456-byte block before deferred GPU execution.
+        // Only the specific Mali vertex shader is patched by the renderer.
+        // Do not freeze deferred command-list data while it is being recorded.
+        std::vector<uint8_t> *v7_snapshot = nullptr;
+        if (!program.is_fragment() && i == 2 && bytes_to_copy == 3456
+            && state.current_backend == renderer::Backend::Vulkan
+            && context->state.type != SCE_GXM_CONTEXT_TYPE_DEFERRED) {
+            uint64_t validation_hash = 0;
+            if (renderer::vertex_diagnostics::fingerprint_guest(mem, buffers[i].address(), bytes_to_copy, validation_hash)) {
+                const auto *guest_data = reinterpret_cast<const uint8_t *>(buffers[i].get(mem));
+                v7_snapshot = new std::vector<uint8_t>(guest_data, guest_data + bytes_to_copy);
             }
         }
-        renderer::set_uniform_buffer(state, context->renderer.get(), !program.is_fragment(), i, bytes_to_copy, buffers[i], v61_hashes, v61_sample_metadata);
+        renderer::set_uniform_buffer(state, context->renderer.get(), !program.is_fragment(), i, bytes_to_copy, buffers[i], v7_snapshot);
     }
 }
 
