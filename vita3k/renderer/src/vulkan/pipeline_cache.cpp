@@ -1227,6 +1227,12 @@ vk::PipelineVertexInputStateCreateInfo PipelineCache::get_vertex_input_state(con
     const bool v61_log_formats = state.physical_device_properties.vendorID == 0x13B5
         && (v61_shader == "2a08ad68c5bb3d08" || v61_seen_formats.size() < 64)
         && v61_seen_formats.insert(v61_shader).second;
+    // V8 A/B: bypass RGB16 half-float vertex fetch on the MK9 skinning shader.
+    // The source has a 10-byte gap after XYZ, so a W=1 half is safe at +6.
+    // The buffer copy performed by scene.cpp must match this vertex format.
+    const bool v8_mali_rgb16 = state.physical_device_properties.vendorID == 0x13B5
+        && !state.features.enable_memory_mapping
+        && v61_shader == "fc685e0d678c3d4e";
 
     uint32_t used_streams = 0;
     for (const SceGxmVertexAttribute &attribute : vertex_program.attributes) {
@@ -1256,6 +1262,17 @@ vk::PipelineVertexInputStateCreateInfo PipelineCache::get_vertex_input_state(con
 
         const shader::usse::AttributeInformation &info = vkvert->attribute_infos.at(attribute.regIndex);
         const AttributeFetch fetch = attribute_fetch(attribute, info, support_scaled_vertex_attribute, unsupported_rgb_vertex_attribute_formats);
+        const bool v8_expand_position = v8_mali_rgb16 && attribute.regIndex == 0
+            && attribute.streamIndex == 0 && attribute.offset == 0
+            && attribute.componentCount == 3 && static_cast<uint32_t>(attribute.format) == 8
+            && vertex_program.streams[0].stride == 24
+            && fetch.format == vk::Format::eR16G16B16Sfloat;
+        const vk::Format vertex_format = v8_expand_position
+            ? vk::Format::eR16G16B16A16Sfloat : fetch.format;
+        if (v8_expand_position) {
+            LOG_INFO("[MALI-V8-RGB16] shader={} reg=0 stream=0 stride=24 fetch=RGB16F->RGBA16F paddedW=1 mapping=disabled",
+                v61_shader);
+        }
 
         if (v61_log_formats) {
             const vk::FormatProperties props = state.physical_device.getFormatProperties(fetch.format);
@@ -1279,7 +1296,7 @@ vk::PipelineVertexInputStateCreateInfo PipelineCache::get_vertex_input_state(con
             attr_descr.push_back(vk::VertexInputAttributeDescription{
                 .location = info.location + i,
                 .binding = binding,
-                .format = fetch.format,
+                .format = vertex_format,
                 .offset = (attribute_bindings ? 0 : offset) + i * fetch.array_element_size });
         }
     }
