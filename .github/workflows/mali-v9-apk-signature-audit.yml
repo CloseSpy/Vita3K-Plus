@@ -1,0 +1,24 @@
+name: Verify V9 APK signature
+on:
+  push:
+    branches: [mali-v9-apk-signature-audit]
+    paths: [.github/workflows/mali-v9-apk-signature-audit.yml]
+permissions:
+  actions: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Inspect the published V9 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh run download 44224541648 --name vita3k-mali-v9-rgb16-staging-apk --dir "$RUNNER_TEMP/x5-v9"
+          apk="$RUNNER_TEMP/x5-v9/app.apk"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
+          test -x "$apksigner"
+          sha256sum "$apk"
+          "$apksigner" verify --verbose --print-certs "$apk"
