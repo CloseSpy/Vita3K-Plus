@@ -1257,8 +1257,7 @@ vk::PipelineVertexInputStateCreateInfo PipelineCache::get_vertex_input_state(con
         const shader::usse::AttributeInformation &info = vkvert->attribute_infos.at(attribute.regIndex);
         const AttributeFetch fetch = attribute_fetch(attribute, info, support_scaled_vertex_attribute, unsupported_rgb_vertex_attribute_formats);
         const bool pad_rgb16_position = layouts[attribute.streamIndex].rgb16_position_attribute == a;
-        const vk::Format vertex_format = pad_rgb16_position
-            ? vk::Format::eR16G16B16A16Sfloat : fetch.format;
+        const vk::Format vertex_format = pad_rgb16_position ? vk::Format::eR16G16B16A16Sfloat : fetch.format;
 
         if (v61_log_formats) {
             const vk::FormatProperties props = state.physical_device.getFormatProperties(fetch.format);
