@@ -1227,12 +1227,6 @@ vk::PipelineVertexInputStateCreateInfo PipelineCache::get_vertex_input_state(con
     const bool v61_log_formats = state.physical_device_properties.vendorID == 0x13B5
         && (v61_shader == "2a08ad68c5bb3d08" || v61_seen_formats.size() < 64)
         && v61_seen_formats.insert(v61_shader).second;
-    // V8 A/B: bypass RGB16 half-float vertex fetch on the MK9 skinning shader.
-    // The source has a 10-byte gap after XYZ, so a W=1 half is safe at +6.
-    // The buffer copy performed by scene.cpp must match this vertex format.
-    const bool v8_mali_rgb16 = state.physical_device_properties.vendorID == 0x13B5
-        && !state.features.enable_memory_mapping
-        && v61_shader == "fc685e0d678c3d4e";
 
     uint32_t used_streams = 0;
     for (const SceGxmVertexAttribute &attribute : vertex_program.attributes) {
@@ -1262,17 +1256,9 @@ vk::PipelineVertexInputStateCreateInfo PipelineCache::get_vertex_input_state(con
 
         const shader::usse::AttributeInformation &info = vkvert->attribute_infos.at(attribute.regIndex);
         const AttributeFetch fetch = attribute_fetch(attribute, info, support_scaled_vertex_attribute, unsupported_rgb_vertex_attribute_formats);
-        const bool v8_expand_position = v8_mali_rgb16 && attribute.regIndex == 0
-            && attribute.streamIndex == 0 && attribute.offset == 0
-            && attribute.componentCount == 3 && static_cast<uint32_t>(attribute.format) == 8
-            && vertex_program.streams[0].stride == 24
-            && fetch.format == vk::Format::eR16G16B16Sfloat;
-        const vk::Format vertex_format = v8_expand_position
+        const bool pad_rgb16_position = layouts[attribute.streamIndex].rgb16_position_attribute == a;
+        const vk::Format vertex_format = pad_rgb16_position
             ? vk::Format::eR16G16B16A16Sfloat : fetch.format;
-        if (v8_expand_position) {
-            LOG_INFO("[MALI-V8-RGB16] shader={} reg=0 stream=0 stride=24 fetch=RGB16F->RGBA16F paddedW=1 mapping=disabled",
-                v61_shader);
-        }
 
         if (v61_log_formats) {
             const vk::FormatProperties props = state.physical_device.getFormatProperties(fetch.format);
@@ -1365,8 +1351,29 @@ VertexStreamLayout PipelineCache::vertex_stream_layout(const ProgramBinding &ver
         items[count++] = { static_cast<uint32_t>(a), attribute.offset, fetch.size, fetch.component_size };
         unaligned |= attribute.offset % fetch.component_size != 0 || stride % fetch.component_size != 0;
     }
-    if (!unaligned)
+    if (!unaligned) {
+        // Keep the pipeline's fetch format and the staged bytes in agreement.
+        if (stream_index == 0 && stride == 24 && state.physical_device_properties.vendorID == 0x13B5
+            && !state.features.enable_memory_mapping && vertex_program.attributes.size() <= VertexStreamLayout::MAX_ATTRIBUTES
+            && hex_string(vkvert->hash).starts_with("fc685e0d678c3d4e")) {
+            const auto position = std::find_if(items.begin(), items.begin() + count, [&](const Item &item) {
+                const auto &attribute = vertex_program.attributes[item.index];
+                return attribute.regIndex == 0 && item.offset == 0 && attribute.componentCount == 3
+                    && static_cast<uint32_t>(attribute.format) == 8;
+            });
+            if (position != items.begin() + count
+                && std::none_of(items.begin(), items.begin() + count, [&](const Item &item) {
+                       return item.index != position->index && (item.offset < 8 || item.offset + item.size > stride);
+                   })) {
+                const auto &attribute = vertex_program.attributes[position->index];
+                const auto &info = vkvert->attribute_infos.at(attribute.regIndex);
+                const auto fetch = attribute_fetch(attribute, info, support_scaled_vertex_attribute, unsupported_rgb_vertex_attribute_formats);
+                if (fetch.format == vk::Format::eR16G16B16Sfloat && fetch.array_size == 1)
+                    layout.rgb16_position_attribute = position->index;
+            }
+        }
         return layout;
+    }
 
     std::sort(items.begin(), items.begin() + count, [](const Item &l, const Item &r) { return l.offset != r.offset ? l.offset < r.offset : l.size > r.size; });
     VertexStreamLayout::Copy block{};

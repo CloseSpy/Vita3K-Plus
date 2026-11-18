@@ -418,36 +418,24 @@ static void bind_vertex_streams(VKContext &context, MemState &mem, uint32_t inst
                     if ((samples % 64) == 0)
                         LOG_INFO("[MALI-V5-CRC] summary sampled={} mismatches={}", samples, mismatches);
                 }
-                // V8 A/B for a single MK9 skinning shader on Mali.
-                // RGB16F XYZ occupies bytes 0..5 of a 24-byte vertex, while
-                // bytes 6..15 are unused by its three active attributes.
-                // Stage W=1.0h at bytes 6..7 and fetch RGBA16F instead.
-                // Do not mutate guest memory, fragment shaders or other inputs.
-                const bool v8_mali_rgb16 = context.state.physical_device_properties.vendorID == 0x13B5
-                    && !mapped && !restride && i == 0 && stream_size >= 8
-                    && vertex_program.streams[i].stride == 24
-                    && hex_string(vkvert->hash).substr(0, 16) == "fc685e0d678c3d4e"
-                    && vertex_program.attributes.size() >= 3
-                    && vertex_program.attributes[0].regIndex == 0
-                    && vertex_program.attributes[0].offset == 0
-                    && vertex_program.attributes[0].componentCount == 3
-                    && static_cast<uint32_t>(vertex_program.attributes[0].format) == 8;
-                if (v8_mali_rgb16) {
-                    context.vertex_ring_make_room(stream_size);
-                    context.vertex_stream_ring_buffer.allocate(stream_size);
+                if (layouts[i].rgb16_position_attribute != VertexStreamLayout::MAX_ATTRIBUTES && stream_size >= 6) {
+                    const uint32_t stride = layouts[i].stride;
+                    const uint32_t last_vertex = ((stream_size - 6) / stride) * stride;
+                    // The guest stream may stop immediately after the final XYZ.
+                    const uint32_t staged_size = std::max(stream_size, last_vertex + 8);
+                    context.vertex_ring_make_room(staged_size);
+                    context.vertex_stream_ring_buffer.allocate(staged_size);
                     uint8_t *staged = context.vertex_stream_ring_buffer.allocation_data();
                     std::memcpy(staged, stream, stream_size);
-                    uint32_t expanded_vertices = 0;
-                    for (uint32_t offset = 0; offset + 8 <= stream_size; offset += 24) {
+                    for (uint64_t offset = 0; offset <= last_vertex; offset += stride) {
                         staged[offset + 6] = 0x00;
                         staged[offset + 7] = 0x3C; // 1.0 in IEEE-754 binary16
-                        ++expanded_vertices;
                     }
-                    context.vertex_stream_ring_buffer.flush(stream_size);
-                    static thread_local uint64_t v8_draw_count = 0;
-                    if (++v8_draw_count <= 8 || (v8_draw_count % 2048) == 0)
-                        LOG_INFO("[MALI-V8-RGB16] shader=fc685e0d678c3d4e stream=0 bytes={} vertices={} applied=true draws={}",
-                            stream_size, expanded_vertices, v8_draw_count);
+                    context.vertex_stream_ring_buffer.flush(staged_size);
+                    static thread_local uint64_t draw_count = 0;
+                    if (++draw_count <= 8 || (draw_count % 2048) == 0)
+                        LOG_INFO("[MALI-V9-RGB16] shader=fc685e0d678c3d4e sourceBytes={} stagedBytes={} vertices={} draws={}",
+                            stream_size, staged_size, last_vertex / stride + 1, draw_count);
                 } else if (restride) {
                     const uint32_t repacked = repacked_size(stream_size, vertex_program.streams[i].stride, layouts[i]);
                     context.vertex_ring_make_room(repacked);

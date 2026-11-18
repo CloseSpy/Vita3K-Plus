@@ -65,6 +65,7 @@ struct VertexStreamLayout {
         uint32_t size;
     };
     bool repack = false;
+    uint32_t rgb16_position_attribute = MAX_ATTRIBUTES;
     uint32_t stride = 0;
     uint32_t record_size = 0;
     std::array<uint32_t, MAX_ATTRIBUTES> offsets{};

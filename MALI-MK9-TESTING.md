@@ -107,3 +107,18 @@ disable the V3 snapshot switch and restart. Leave V2 as the fallback APK.
   game saves and firmware, can cheaply falsify/confirm the report's relevance.
   Installing it may require uninstalling the + fork due package-signature
   conflicts. Preserve the installed APK and save data before swapping builds.
+
+## V9 RGB16 staging
+
+V8 used separate predicates in the Vulkan input description and buffer upload.
+Those predicates could disagree on attribute order, repacking or the resolved
+Vulkan format. V8 also skipped writing W if a stream ended after the last XYZ.
+V9 shares the layout decision, checks for overlapping active attributes, and
+stages all four half-floats even for a short final record. It remains limited
+to the same Mali shader with memory mapping disabled.
+
+Compare the V6.1 baseline, V8 and V9 with Vulkan and the same fight or demo
+sequence. Keep the precision and snapshot settings fixed. Correlate capture
+times with `[MALI-V9-RGB16]` log lines and compare fighter meshes and the arena.
+The source inspection establishes a mismatch in V8's predicates. Causality
+for the observed MK9 geometry still requires a device test.
