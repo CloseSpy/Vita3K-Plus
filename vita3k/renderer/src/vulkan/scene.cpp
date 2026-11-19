@@ -303,8 +303,31 @@ static void draw_bind_descriptors(VKContext &context, MemState &mem) {
         descriptors.size(), descriptors.data(), dynamic_offset_count, dynamic_offsets);
 }
 
+// A zero result means that no safe staging allocation can be made.
+static constexpr uint32_t rgb16_staging_size(uint32_t source_size, uint32_t stride, uint64_t capacity) {
+    if (stride < 8 || source_size < 6)
+        return 0;
+    const uint64_t last_vertex = ((source_size - 6) / stride) * uint64_t(stride);
+    const uint64_t staged_size = std::max<uint64_t>(source_size, last_vertex + 8);
+    return staged_size <= capacity && staged_size <= UINT32_MAX ? static_cast<uint32_t>(staged_size) : 0;
+}
+
+static_assert(rgb16_staging_size(5, 24, 64) == 0);
+static_assert(rgb16_staging_size(6, 24, 64) == 8);
+static_assert(rgb16_staging_size(30, 24, 64) == 32);
+static_assert(rgb16_staging_size(30, 24, 31) == 0);
+static_assert(rgb16_staging_size(32, 24, 32) == 32);
+static_assert(rgb16_staging_size(8, 0, 64) == 0);
+static_assert(rgb16_staging_size(UINT32_MAX - 1, 8, UINT64_MAX) == 0);
+
+static void log_rgb16_skip(std::string_view reason) {
+    static thread_local std::set<std::string_view> logged_reasons;
+    if (logged_reasons.insert(reason).second)
+        LOG_INFO("[MALI-V10-RGB16] shader=fc685e0d678c3d4e result=skipped reason={}", reason);
+}
+
 // vertex count is only used with double buffer mapping
-static void bind_vertex_streams(VKContext &context, MemState &mem, uint32_t instance_count, uint32_t max_index) {
+static bool bind_vertex_streams(VKContext &context, MemState &mem, uint32_t instance_count, uint32_t max_index) {
     GxmRecordState &state = context.record;
     const ProgramBinding &vertex_program = *state.vertex_program_binding;
     VertexProgram *vkvert = vertex_program.vertex_program.get();
@@ -340,12 +363,43 @@ static void bind_vertex_streams(VKContext &context, MemState &mem, uint32_t inst
         }
     }
 
-    if (max_stream_idx == 0)
-        return;
-
     std::array<VertexStreamLayout, SCE_GXM_MAX_VERTEX_STREAMS> layouts;
-    for (int i = 0; i < max_stream_idx; i++)
+    for (int i = 0; i < std::max(1, max_stream_idx); i++)
         layouts[i] = context.state.pipeline_cache.vertex_stream_layout(vertex_program, i);
+
+    const auto &position_layout = layouts[0];
+    if (position_layout.rgb16_skip_reason)
+        log_rgb16_skip(position_layout.rgb16_skip_reason);
+    if (max_stream_idx == 0)
+        return true;
+
+    uint32_t staged_size = 0;
+    uint32_t rgb16_source_size = 0;
+    if (position_layout.rgb16_position_attribute != VertexStreamLayout::MAX_ATTRIBUTES) {
+        const auto &input = state.vertex_streams[0];
+        const Address address = input.data.address();
+        const uint64_t source_size = input.size;
+        const char *skip_reason = nullptr;
+        if (!address || source_size < 6 || source_size > UINT32_MAX - address
+            || !is_valid_addr_range(mem, address, static_cast<Address>(address + source_size))) {
+            skip_reason = "invalid-source-range";
+        } else {
+            rgb16_source_size = static_cast<uint32_t>(source_size);
+            staged_size = rgb16_staging_size(rgb16_source_size, position_layout.stride,
+                context.vertex_stream_ring_buffer.get_capacity());
+            if (!staged_size)
+                skip_reason = "staging-size-exceeds-capacity";
+        }
+        if (skip_reason) {
+            log_rgb16_skip(skip_reason);
+            // The selected pipeline expects RGBA16F. Never draw with unpadded bytes.
+            for (int i = 0; i < max_stream_idx; i++) {
+                state.vertex_streams[i].data = nullptr;
+                state.vertex_streams[i].size = 0;
+            }
+            return false;
+        }
+    }
 
     // V5: identify unusual Vita layouts without changing vertex input state.
     if (context.state.physical_device_properties.vendorID == 0x13B5) {
@@ -418,11 +472,9 @@ static void bind_vertex_streams(VKContext &context, MemState &mem, uint32_t inst
                     if ((samples % 64) == 0)
                         LOG_INFO("[MALI-V5-CRC] summary sampled={} mismatches={}", samples, mismatches);
                 }
-                if (layouts[i].rgb16_position_attribute != VertexStreamLayout::MAX_ATTRIBUTES && stream_size >= 6) {
-                    const uint32_t stride = layouts[i].stride;
+                if (i == 0 && staged_size) {
+                    const uint32_t stride = position_layout.stride;
                     const uint32_t last_vertex = ((stream_size - 6) / stride) * stride;
-                    // The guest stream may stop immediately after the final XYZ.
-                    const uint32_t staged_size = std::max(stream_size, last_vertex + 8);
                     context.vertex_ring_make_room(staged_size);
                     context.vertex_stream_ring_buffer.allocate(staged_size);
                     uint8_t *staged = context.vertex_stream_ring_buffer.allocation_data();
@@ -432,10 +484,6 @@ static void bind_vertex_streams(VKContext &context, MemState &mem, uint32_t inst
                         staged[offset + 7] = 0x3C; // 1.0 in IEEE-754 binary16
                     }
                     context.vertex_stream_ring_buffer.flush(staged_size);
-                    static thread_local uint64_t draw_count = 0;
-                    if (++draw_count <= 8 || (draw_count % 2048) == 0)
-                        LOG_INFO("[MALI-V9-RGB16] shader=fc685e0d678c3d4e sourceBytes={} stagedBytes={} vertices={} draws={}",
-                            stream_size, staged_size, last_vertex / stride + 1, draw_count);
                 } else if (restride) {
                     const uint32_t repacked = repacked_size(stream_size, vertex_program.streams[i].stride, layouts[i]);
                     context.vertex_ring_make_room(repacked);
@@ -455,9 +503,16 @@ static void bind_vertex_streams(VKContext &context, MemState &mem, uint32_t inst
         }
     }
 
+    if (staged_size) {
+        static thread_local uint64_t draw_count = 0;
+        if (++draw_count <= 8 || (draw_count % 2048) == 0)
+            LOG_INFO("[MALI-V10-RGB16] shader=fc685e0d678c3d4e result=applied format=R16G16B16A16_SFLOAT stride={} sourceBytes={} stagedBytes={} draws={}",
+                position_layout.stride, rgb16_source_size, staged_size, draw_count);
+    }
+
     if (!context.state.pipeline_cache.needs_attribute_bindings(vertex_program)) {
         context.render_cmd.bindVertexBuffers(0, max_stream_idx, context.vertex_stream_buffers, context.vertex_stream_offsets);
-        return;
+        return true;
     }
 
     // one binding per attribute, in get_vertex_input_state's order, carrying the attribute offset
@@ -473,6 +528,7 @@ static void bind_vertex_streams(VKContext &context, MemState &mem, uint32_t inst
         offsets.push_back(context.vertex_stream_offsets[attribute.streamIndex] + (a < VertexStreamLayout::MAX_ATTRIBUTES ? layouts[attribute.streamIndex].offsets[a] : attribute.offset));
     }
     context.render_cmd.bindVertexBuffers(0, buffers, offsets);
+    return true;
 }
 
 static void draw_bounds(const VKContext &context, int32_t &x0, int32_t &y0, int32_t &x1, int32_t &y1) {
@@ -890,7 +946,8 @@ void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format
     }
 
     // bind the vertex streams
-    bind_vertex_streams(context, mem, instance_count, max_index);
+    if (!bind_vertex_streams(context, mem, instance_count, max_index))
+        return;
 
     // Turnip on Adreno 6xx: a draw with another pipeline than the previous draw waits for the draws before it
     if (context.state.wait_on_pipeline_switch && context.current_pipeline != context.last_draw_pipeline && context.record.color_surface.data) {

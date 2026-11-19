@@ -12,7 +12,7 @@ on:
       - mali-v61-uniform-measurement
       - mali-v8-rgb16-padding
       - mali-v9-rgb16-staging
-      - mali-v9-mk9-parallel
+      - mali-v10-mk9-parallel
 
 permissions:
   contents: read
@@ -61,35 +61,36 @@ jobs:
         run: bash ./.ci/build-android.sh artifacts/mali-test
 
       - name: Verify parallel MK9 APK
-        if: github.ref_name == 'mali-v9-mk9-parallel'
+        if: github.ref_name == 'mali-v10-mk9-parallel'
         run: |
           set -euo pipefail
           tools="$ANDROID_HOME/build-tools/35.0.0"
           apk=artifacts/mali-test/app.apk
-          package=org.vita3kplus.emulator.debug.v9test
+          package=org.vita3kplus.emulator.debug.v10test
           "$tools/apksigner" verify --verbose --print-certs "$apk"
           test "$("$tools/aapt" dump badging "$apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")" = "$package"
           "$tools/aapt" dump badging "$apk" | tee /tmp/mk9-badging.txt
           grep -F "native-code: 'arm64-v8a'" /tmp/mk9-badging.txt
           "$tools/aapt" dump xmltree "$apk" AndroidManifest.xml | tee /tmp/mk9-manifest.txt
-          awk '/android:authorities/ { seen++; if (index($0, "=\"org.vita3kplus.emulator.debug.v9test.") == 0) bad=1 } END { exit (bad || !seen) }' /tmp/mk9-manifest.txt
+          awk '/android:authorities/ { seen++; if (index($0, "=\"org.vita3kplus.emulator.debug.v10test.") == 0) bad=1 } END { exit (bad || !seen) }' /tmp/mk9-manifest.txt
           grep -F "$package.documents" /tmp/mk9-manifest.txt
           grep 'android:allowBackup' /tmp/mk9-manifest.txt | grep -F '0x0'
           if grep -q 'android:sharedUserId' /tmp/mk9-manifest.txt; then exit 1; fi
           unzip -p "$apk" lib/arm64-v8a/libVita3K.so > /tmp/mk9-vita3k.so
-          grep -aFq '[MALI-V9-RGB16]' /tmp/mk9-vita3k.so
+          grep -aFq '[MALI-V10-RGB16]' /tmp/mk9-vita3k.so
+          grep -aFq '[MALI-V10-MAPPING]' /tmp/mk9-vita3k.so
           sha256sum "$apk" | tee artifacts/mali-test/SHA256SUMS.txt
 
       - name: Upload parallel MK9 APK
-        if: github.ref_name == 'mali-v9-mk9-parallel'
+        if: github.ref_name == 'mali-v10-mk9-parallel'
         uses: actions/upload-artifact@v7
         with:
-          name: Vita3K-MK9-V9-parallel
+          name: Vita3K-MK9-V10-parallel
           path: artifacts/mali-test/
           if-no-files-found: error
 
       - name: Upload unsigned-for-release, debug-signed APK
-        if: github.ref_name != 'mali-v9-mk9-parallel'
+        if: github.ref_name != 'mali-v10-mk9-parallel'
         uses: actions/upload-artifact@v7
         with:
           name: vita3k-mali-v9-rgb16-staging-apk

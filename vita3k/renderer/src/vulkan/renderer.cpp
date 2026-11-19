@@ -1166,6 +1166,13 @@ void VKState::late_init(const Config &cfg, const std::string_view game_id, MemSt
         // we support the requested mapping method
         mapping_method = request_mapping;
 
+    const bool mk9_mali_g610 = game_id == "PCSE00023" && physical_device_properties.vendorID == 0x13B5
+        && std::string_view(physical_device_properties.deviceName.data()).starts_with("Mali-G610");
+    const bool page_table_unavailable = !(supported_mapping_methods_mask & (1 << static_cast<int>(MappingMethod::PageTable)));
+    const bool mk9_disable_mapping = mk9_mali_g610 && request_mapping == MappingMethod::PageTable && page_table_unavailable;
+    if (mk9_disable_mapping)
+        mapping_method = MappingMethod::Disabled;
+
     // Qualcomm drivers don't like Native Buffer and Page Table so fall back to Double Buffer. Turnip is fine.
     if (is_adreno_stock && (mapping_method == MappingMethod::PageTable || mapping_method == MappingMethod::NativeBuffer)) {
         LOG_INFO("Stock Adreno driver: running {} as Double Buffer this session (the driver crashes on the host-visible device-local mapping it needs); the saved option is unchanged — load Turnip to use it.", mapping_string[static_cast<int>(mapping_method)]);
@@ -1173,6 +1180,12 @@ void VKState::late_init(const Config &cfg, const std::string_view game_id, MemSt
     }
 
     features.enable_memory_mapping = mapping_method != MappingMethod::Disabled;
+
+    if (mk9_mali_g610) {
+        LOG_INFO("[MALI-V10-MAPPING] title={} requested={} effective={} enable_memory_mapping={} reason={}",
+            game_id, config_mapping, mapping_method == MappingMethod::Disabled ? "disabled" : mapping_string[static_cast<int>(mapping_method)],
+            features.enable_memory_mapping, mk9_disable_mapping ? "page-table-unsupported" : "standard-selection");
+    }
 
     // The user's most stable Mali/MK9 baseline disables memory mapping.
     // This opt-in V3 experiment compares guest-thread vertex snapshots against

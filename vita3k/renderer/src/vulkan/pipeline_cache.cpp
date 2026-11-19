@@ -301,6 +301,9 @@ void PipelineCache::init(bool support_rasterized_order_access) {
             }
         }
 
+        const auto rgba16f_properties = state.physical_device.getFormatProperties(vk::Format::eR16G16B16A16Sfloat);
+        support_rgba16f_vertex_attribute = static_cast<bool>(rgba16f_properties.bufferFeatures & vk::FormatFeatureFlagBits::eVertexBuffer);
+
         // same for scaled formats
         const vk::FormatProperties scaled_property = state.physical_device.getFormatProperties(vk::Format::eR8G8B8A8Uscaled);
         support_scaled_vertex_attribute = static_cast<bool>(scaled_property.bufferFeatures & vk::FormatFeatureFlagBits::eVertexBuffer);
@@ -1350,29 +1353,41 @@ VertexStreamLayout PipelineCache::vertex_stream_layout(const ProgramBinding &ver
         items[count++] = { static_cast<uint32_t>(a), attribute.offset, fetch.size, fetch.component_size };
         unaligned |= attribute.offset % fetch.component_size != 0 || stride % fetch.component_size != 0;
     }
-    if (!unaligned) {
-        // Keep the pipeline's fetch format and the staged bytes in agreement.
-        if (stream_index == 0 && stride == 24 && state.physical_device_properties.vendorID == 0x13B5
-            && !state.features.enable_memory_mapping && vertex_program.attributes.size() <= VertexStreamLayout::MAX_ATTRIBUTES
-            && hex_string(vkvert->hash).starts_with("fc685e0d678c3d4e")) {
+    // Match the same layout in the pipeline and at vertex upload.
+    if (stream_index == 0 && state.physical_device_properties.vendorID == 0x13B5
+        && hex_string(vkvert->hash).starts_with("fc685e0d678c3d4e")) {
+        if (state.features.enable_memory_mapping) {
+            layout.rgb16_skip_reason = "mapping-active";
+        } else if (unaligned || stride != 24 || vertex_program.attributes.size() > VertexStreamLayout::MAX_ATTRIBUTES) {
+            layout.rgb16_skip_reason = "incompatible-layout";
+        } else {
             const auto position = std::find_if(items.begin(), items.begin() + count, [&](const Item &item) {
                 const auto &attribute = vertex_program.attributes[item.index];
                 return attribute.regIndex == 0 && item.offset == 0 && attribute.componentCount == 3
-                    && static_cast<uint32_t>(attribute.format) == 8;
+                    && attribute.format == SCE_GXM_ATTRIBUTE_FORMAT_F16;
             });
-            if (position != items.begin() + count
-                && std::none_of(items.begin(), items.begin() + count, [&](const Item &item) {
-                       return item.index != position->index && (item.offset < 8 || item.offset + item.size > stride);
-                   })) {
+            if (position == items.begin() + count) {
+                layout.rgb16_skip_reason = "position-attribute-mismatch";
+            } else if (std::any_of(items.begin(), items.begin() + count, [&](const Item &item) {
+                           return item.index != position->index && (item.offset < 8 || item.offset + item.size > stride);
+                       })) {
+                layout.rgb16_skip_reason = "overlapping-or-out-of-stride-attribute";
+            } else {
                 const auto &attribute = vertex_program.attributes[position->index];
                 const auto &info = vkvert->attribute_infos.at(attribute.regIndex);
                 const auto fetch = attribute_fetch(attribute, info, support_scaled_vertex_attribute, unsupported_rgb_vertex_attribute_formats);
-                if (fetch.format == vk::Format::eR16G16B16Sfloat && fetch.array_size == 1)
+                if (fetch.format != vk::Format::eR16G16B16Sfloat || fetch.array_size != 1) {
+                    layout.rgb16_skip_reason = "resolved-format-not-rgb16f";
+                } else if (!support_rgba16f_vertex_attribute) {
+                    layout.rgb16_skip_reason = "rgba16f-vertex-format-unsupported";
+                } else {
                     layout.rgb16_position_attribute = position->index;
+                }
             }
         }
-        return layout;
     }
+    if (!unaligned)
+        return layout;
 
     std::sort(items.begin(), items.begin() + count, [](const Item &l, const Item &r) { return l.offset != r.offset ? l.offset < r.offset : l.size > r.size; });
     VertexStreamLayout::Copy block{};

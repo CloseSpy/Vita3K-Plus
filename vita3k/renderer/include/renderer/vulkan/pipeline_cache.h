@@ -66,6 +66,7 @@ struct VertexStreamLayout {
     };
     bool repack = false;
     uint32_t rgb16_position_attribute = MAX_ATTRIBUTES;
+    const char *rgb16_skip_reason = nullptr;
     uint32_t stride = 0;
     uint32_t record_size = 0;
     std::array<uint32_t, MAX_ATTRIBUTES> offsets{};
@@ -90,6 +91,7 @@ private:
     // does the GPU support SCALED vertex attribute formats (like R8G8_USCALED), some Android GPUs don't
     // we need this information both while creating the pipeline and generating the shader
     bool support_scaled_vertex_attribute;
+    bool support_rgba16f_vertex_attribute = false;
     // does the GPU support rasterized color attachment (i.e coherent texture fetch)
     // this is needed to properly emulate frag color access in a way similar to opengl framebuffer fetch
     bool support_coherent_framebuffer_fetch;

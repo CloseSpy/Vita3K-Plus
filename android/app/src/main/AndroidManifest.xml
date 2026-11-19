@@ -89,7 +89,7 @@
          The requestLegacyExternalStorage parameter only has an effect when running on Android <= 10
     -->
     <application android:name=".Vita3KApplication"
-        android:label="Vita3K+ MK9 V9"
+        android:label="Vita3K+ MK9 V10"
         android:icon="@mipmap/ic_launcher_plus"
         android:allowBackup="false"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
