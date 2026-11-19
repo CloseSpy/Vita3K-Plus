@@ -643,7 +643,9 @@ static std::string crash_context_provider() {
 bool late_init(EmuEnvState &state) {
     // note: mem is not initialized yet but that's not an issue
     // the renderer is not using it yet, just storing it for later uses
-    state.renderer->late_init(state.cfg, state.app_path, state.mem);
+    // Android can initialize Vulkan before load_app assigns app_path. The launch metadata already has MK9's title ID.
+    const auto &renderer_game_id = state.io.title_id == "PCSE00023" ? state.io.title_id : state.app_path;
+    state.renderer->late_init(state.cfg, renderer_game_id, state.mem);
     // for the stop-the-world bracket around page-table memory transitions
     state.renderer->kernel = &state.kernel;
     set_fault_context_provider(&fault_context_provider);
