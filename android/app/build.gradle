@@ -41,7 +41,7 @@ android {
 
 	defaultConfig {
 		// namespace stays org.vita3k.emulator: it is the Java package the JNI symbols are bound to
-		applicationId = "org.vita3kplus.emulator"
+		applicationId = "org.vita3kplus.emulator.debug.v9test"
 		minSdk = 28
 		targetSdk = 35
 		versionCode = appVerHi * 100 + appVerMid * 10 + appVerLo
@@ -68,8 +68,7 @@ android {
 		debug {
 			debuggable = true
 			jniDebuggable = true
-			applicationIdSuffix = '.debug'
-		}
+			}
 
 		reldebug {
 			debuggable = true
@@ -81,8 +80,7 @@ android {
 			}
 			minifyEnabled = false
 			shrinkResources = false
-			applicationIdSuffix = '.debug'
-			signingConfig = signingConfigs.debug
+				signingConfig = signingConfigs.debug
 		}
 
 		release {

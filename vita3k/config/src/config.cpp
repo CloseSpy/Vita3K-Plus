@@ -282,6 +282,10 @@ static ExitCode parse(Config &cfg, const fs::path &load_path, const fs::path &ro
         return FileNotFound;
     }
 
+#ifdef __ANDROID__
+    // Keep the parallel APK inside its own VitaFS even when importing settings.
+    cfg.set_vita_fs_path(root_vita_fs_path);
+#else
     if (cfg.vita_fs_path.empty())
         cfg.set_vita_fs_path(root_vita_fs_path);
     else {
@@ -290,6 +294,7 @@ static ExitCode parse(Config &cfg, const fs::path &load_path, const fs::path &ro
             return InvalidApplicationPath;
         }
     }
+#endif
 
     return Success;
 }

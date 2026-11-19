@@ -675,20 +675,9 @@ Java_org_vita3k_emulator_NativeLib_getCurrentEmulatorPath(JNIEnv *env, jclass) {
 }
 
 JNIEXPORT jboolean JNICALL
-Java_org_vita3k_emulator_NativeLib_setCurrentEmulatorPath(JNIEnv *env, jclass, jstring path_str) {
-    auto *emuenv = get_emuenv();
-    auto *controller = get_app_session_controller();
-    if (!emuenv || !path_str || (controller && controller->has_active_session()))
-        return JNI_FALSE;
-
-    const std::string path = jstring_to_string(env, path_str);
-    if (path.empty())
-        return JNI_FALSE;
-
-    if (!app::switch_emulator_path(*emuenv, fs::path(path)))
-        return JNI_FALSE;
-    config::save_current_config(emuenv->cfg, emuenv->config_path, {});
-    return JNI_TRUE;
+Java_org_vita3k_emulator_NativeLib_setCurrentEmulatorPath(JNIEnv *, jclass, jstring) {
+    // The MK9 parallel APK must never switch to a shared or original VitaFS.
+    return JNI_FALSE;
 }
 
 JNIEXPORT jintArray JNICALL
