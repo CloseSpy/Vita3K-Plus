@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "mk9-v10-bridge-001",
+  "kind": "codex_analysis",
+  "enabled": true,
+  "goal": "Inspect MK9 Mali-G610 RGB16 vertex fallback and V10 mapping logic; propose a narrow patch and tests. Do not modify Android device or install APK.",
+  "repo": "CloseSpy/Vita3K-Plus",
+  "ref": "mali-v10-mk9-parallel",
+  "requires_approval_for": [
+    "apk_install",
+    "adb_write",
+    "git_push",
+    "pull_request",
+    "paid_api"
+  ],
+  "max_duration_seconds": 900
+}
