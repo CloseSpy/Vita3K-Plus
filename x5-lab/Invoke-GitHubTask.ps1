@@ -6,7 +6,7 @@ $branch = 'automation/x5-lab-diagnostics-bridge'
 $path = 'x5-lab/tasks/current.json'
 $stateDir = Join-Path $Root 'agent-state'
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
-$raw = & gh api "repos/$repo/contents/$path" -f ref=$branch -H 'Accept: application/vnd.github.raw+json' 2>&1
+$raw = & gh api -X GET "repos/$repo/contents/$path" -f ref=$branch -H 'Accept: application/vnd.github.raw+json' 2>&1
 if ($LASTEXITCODE -ne 0) { throw "Unable to retrieve approved task from GitHub: $raw" }
 $task = ($raw -join "`n") | ConvertFrom-Json
 if ($task.schema_version -ne 1 -or $task.kind -ne 'codex_analysis' -or $task.enabled -ne $true -or $task.repo -ne $repo -or $task.ref -ne 'mali-v10-mk9-parallel') { throw 'Task rejected by allowlist' }
