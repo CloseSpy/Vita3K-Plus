@@ -1,0 +1,84 @@
+name: X5 Lab diagnostic intake
+
+on:
+  workflow_dispatch:
+    inputs:
+      report_json:
+        description: 'Sanitized X5-Lab report JSON (no secrets, IPs, paths or personal data)'
+        required: true
+        type: string
+      source_run:
+        description: 'Optional X5-Lab cycle identifier'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: x5-lab-intake-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      X5_REPORT: ${{ inputs.report_json }}
+      X5_SOURCE_RUN: ${{ inputs.source_run }}
+    steps:
+      - name: Validate and summarize report
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, re, pathlib, sys
+          raw = os.environ.get("X5_REPORT", "")
+          if not raw or len(raw) > 12000:
+              sys.exit("Missing or oversized report")
+          try:
+              data = json.loads(raw)
+          except json.JSONDecodeError as e:
+              sys.exit(f"Invalid JSON: {e}")
+          if not isinstance(data, dict):
+              sys.exit("Report must be a JSON object")
+          allowed = {"schema_version", "cycle_id", "timestamp_utc", "model", "android_major",
+                     "gpu", "adb_status", "emulator_package", "emulator_version",
+                     "game_id", "build_commit", "build_run_id", "apk_sha256",
+                     "fps_min", "fps_avg", "fps_max", "geometry_status",
+                     "crash_count", "notes_code"}
+          unknown = set(data) - allowed
+          if unknown:
+              sys.exit("Unknown fields (possibly private): " + ", ".join(sorted(unknown)))
+          if data.get("schema_version") != 1:
+              sys.exit("schema_version must be 1")
+          if data.get("game_id") not in (None, "PCSE00023"):
+              sys.exit("Unexpected game_id")
+          for k, v in data.items():
+              if not isinstance(v, (str, int, float, bool, type(None))):
+                  sys.exit(f"Invalid value type: {k}")
+              if isinstance(v, str) and (len(v) > 160 or re.search(r"(?i)(password|token|secret|api[_-]?key|\\\\|[A-Z]:\\\\|(?:\\d{1,3}\\.){3}\\d{1,3})", v)):
+                  sys.exit(f"Potential private data in {k}")
+          if data.get("apk_sha256") and not re.fullmatch(r"[0-9a-fA-F]{64}", str(data["apk_sha256"])):
+              sys.exit("Invalid APK SHA256")
+          for k in ("fps_min", "fps_avg", "fps_max"):
+              if k in data and (not isinstance(data[k], (int,float)) or isinstance(data[k], bool) or not 0 <= data[k] <= 240):
+                  sys.exit("Invalid FPS metric")
+          pathlib.Path("x5-lab-report.json").write_text(json.dumps(data, indent=2, sort_keys=True)+"\n")
+          summary = ["## X5-Lab intake", "",
+                     "- Report validated against allowlisted fields",
+                     "- **No autonomous gameplay test is implied**",
+                     f"- Cycle: `{str(data.get('cycle_id','unknown'))[:80]}`",
+                     f"- Game: `{data.get('game_id','not supplied')}`",
+                     f"- Geometry: `{data.get('geometry_status','not tested')}`",
+                     f"- Emulator: `{data.get('emulator_version','unknown')}`",
+                     f"- Commit: `{data.get('build_commit','unknown')}`"]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write("\n".join(summary)+"\n")
+          PY
+      - name: Preserve sanitized evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: x5-lab-report-${{ github.run_id }}
+          path: x5-lab-report.json
+          retention-days: 14
+          if-no-files-found: error
