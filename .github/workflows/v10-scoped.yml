@@ -16,6 +16,8 @@ jobs:
   build-scoped:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      VCPKG_ROOT: /usr/local/share/vcpkg
     steps:
       - name: Report run to commit status
         env:
