@@ -58,7 +58,7 @@ jobs:
           test "$(grep -Ec '^Signer #[0-9]+ certificate SHA-256 digest: [0-9a-fA-F]{64}$' "$dir/signature.txt")" -eq 1
           "$tools/aapt2" dump badging "$apk" > "$dir/badging.txt"
           "$tools/aapt2" dump xmltree "$apk" --file AndroidManifest.xml > "$dir/manifest.txt"
-          grep -Eq "^package: name='org\.vita3kplus\.emulator\.debug\.v10scoped'" "$dir/badging.txt"
+          grep -Eq "^package: name='org\.vita3kplus\.emulator\.debug\.v10scopedzip'" "$dir/badging.txt"
           grep -Eq "^native-code: 'arm64-v8a'[[:space:]]*$" "$dir/badging.txt"
           grep -Eq '^[[:space:]]*E: manifest([[:space:]]|$)' "$dir/manifest.txt"
           min_sdk=$(sed -nE "s/^(minSdkVersion|sdkVersion):'([0-9]+)'.*/\2/p" "$dir/badging.txt")

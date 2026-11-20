@@ -44,7 +44,7 @@ class MainActivity : AppCompatActivity() {
         val extensions = pendingInstallFileExtensions ?: emptySet()
         pendingFileCallback = null
         pendingInstallFileExtensions = null
-        val uri = result.data?.data
+        val uri = StorageAccess.selectedDocument(result.data)
         if (callback == null) return@registerForActivityResult
         lifecycleScope.launch {
             val path = if (result.resultCode == RESULT_OK && uri != null) {
@@ -124,7 +124,7 @@ class MainActivity : AppCompatActivity() {
         pendingArchiveFolderCallback = null
         pendingInstallFileExtensions = allowedExtensions
         pendingArchiveFolderExtensions = null
-        filePickerLauncher.launch(StorageAccess.createFilePickerIntent(arrayOf("*/*")))
+        filePickerLauncher.launch(StorageAccess.createInstallPickerIntent(allowedExtensions))
     }
 
     fun requestArchiveFolderPaths(
