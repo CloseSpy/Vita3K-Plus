@@ -24,7 +24,6 @@ import android.widget.Toast;
 
 import androidx.annotation.Keep;
 import androidx.compose.ui.platform.ComposeView;
-import androidx.core.app.ActivityCompat;
 import androidx.core.content.pm.ShortcutInfoCompat;
 import androidx.core.content.pm.ShortcutManagerCompat;
 import androidx.core.graphics.drawable.IconCompat;
@@ -79,8 +78,6 @@ public class Emulator extends SDLActivity
     private static final String APP_RESTART_PARAMETERS = "AppStartParameters";
     static final int FILE_DIALOG_CODE = 545;
     static final int FOLDER_DIALOG_CODE = 546;
-    static final int FOLDER_ACCESS_SETTINGS_CODE = 547;
-    static final int FOLDER_ACCESS_PERMISSION_CODE = 548;
     public interface ImagePathResultCallback {
         void onResult(String path);
     }
@@ -1139,10 +1136,6 @@ public class Emulator extends SDLActivity
 
     @Keep
     public void showFileDialog() {
-        if (!StorageAccess.hasStorageAccess(this)) {
-            requestFolderAccess();
-            return;
-        }
 
         startActivityForResult(
                 Intent.createChooser(
@@ -1153,22 +1146,12 @@ public class Emulator extends SDLActivity
 
     @Keep
     public void showFolderDialog() {
-        if (!StorageAccess.hasStorageAccess(this)) {
-            requestFolderAccess();
-            return;
-        }
-
-        startActivityForResult(
-                Intent.createChooser(StorageAccess.createFolderPickerIntent(), "Choose a folder"),
-                FOLDER_DIALOG_CODE);
+        // Native callers cannot use a SAF tree as a writable directory.
+        filedialogReturn("");
     }
 
     public void requestImagePath(ImagePathResultCallback onResult) {
         pendingImagePathCallback = onResult;
-        if (!StorageAccess.hasStorageAccess(this)) {
-            requestFolderAccess();
-            return;
-        }
 
         launchImagePicker();
     }
@@ -1295,86 +1278,23 @@ public class Emulator extends SDLActivity
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 
-        switch (requestCode) {
-            case FOLDER_ACCESS_SETTINGS_CODE:
-                if (StorageAccess.hasStorageAccess(this)) {
-                    if (pendingImagePathCallback != null) {
-                        launchImagePicker();
-                    } else {
-                        showFolderDialog();
-                    }
-                } else {
-                    if (pendingImagePathCallback != null) {
-                        dispatchPendingImagePath(null);
-                    } else {
-                        filedialogReturn("");
-                    }
-                }
-                break;
-            case FILE_DIALOG_CODE:
-                if (pendingImagePathCallback != null) {
-                    final String resolvedPath = resultCode == RESULT_OK && data != null && data.getData() != null
-                            ? StorageAccess.resolveUriToPath(this, data.getData())
-                            : null;
-                    dispatchPendingImagePath(resolvedPath);
-                    break;
-                }
-                if (resultCode != RESULT_OK || data == null || data.getData() == null) {
-                    filedialogReturn("");
-                    break;
-                }
-                {
-                    final String resolvedPath = StorageAccess.resolveUriToPath(this, data.getData());
-                    filedialogReturn(resolvedPath != null ? resolvedPath : "");
-                }
-                break;
-            case FOLDER_DIALOG_CODE: {
-                final String selectedPath = resultCode == RESULT_OK && data != null && data.getData() != null
-                        ? StorageAccess.resolveTreeUriToPath(this, data.getData())
-                        : null;
-                filedialogReturn(selectedPath != null ? selectedPath : "");
-                break;
-            }
-            default:
-                break;
-        }
-    }
+        if (requestCode != FILE_DIALOG_CODE) return;
 
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-
-        if (requestCode != FOLDER_ACCESS_PERMISSION_CODE) {
+        final boolean image = pendingImagePathCallback != null;
+        final android.net.Uri uri = resultCode == RESULT_OK && data != null ? data.getData() : null;
+        if (uri == null) {
+            if (image) dispatchPendingImagePath(null);
+            else filedialogReturn("");
             return;
         }
-
-        if (StorageAccess.hasStorageAccess(this)) {
-            if (pendingImagePathCallback != null) {
-                launchImagePicker();
-            } else {
-                showFolderDialog();
-            }
-        } else {
-            if (pendingImagePathCallback != null) {
-                dispatchPendingImagePath(null);
-            } else {
-                filedialogReturn("");
-            }
-        }
-    }
-
-    private void requestFolderAccess() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            startActivityForResult(
-                    StorageAccess.createManageAllFilesIntent(this),
-                    FOLDER_ACCESS_SETTINGS_CODE);
-            return;
-        }
-
-        ActivityCompat.requestPermissions(
-                this,
-                StorageAccess.missingStoragePermissions(this),
-                FOLDER_ACCESS_PERMISSION_CODE);
+        new Thread(() -> {
+            final String path = StorageAccess.stageDocument(this, uri, java.util.Collections.emptySet());
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (image) dispatchPendingImagePath(path);
+                else filedialogReturn(path != null ? path : "");
+            });
+        }, "vita3k-scoped-import").start();
     }
 
     private void applyImmersiveMode() {

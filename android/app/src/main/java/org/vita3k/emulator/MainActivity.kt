@@ -1,12 +1,15 @@
 package org.vita3k.emulator
 
-import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.vita3k.emulator.data.AppInfo
 import org.vita3k.emulator.data.AppStorage
 import org.vita3k.emulator.ui.navigation.AppNavigation
@@ -30,74 +33,48 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private var pendingFolderCallback: ((String?) -> Unit)? = null
     private var pendingFileCallback: ((String?) -> Unit)? = null
     private var pendingArchiveFolderCallback: ((List<String>) -> Unit)? = null
     private var pendingInstallFileExtensions: Set<String>? = null
     private var pendingArchiveFolderExtensions: Set<String>? = null
-    private var pendingStorageAction: (() -> Unit)? = null
-
-    private val folderPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) {
-        if (StorageAccess.hasStorageAccess(this)) {
-            launchPendingStorageAction()
-        } else {
-            cancelPendingStorageRequest()
-        }
-    }
-
-    private val manageFolderAccessLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        if (StorageAccess.hasStorageAccess(this)) {
-            launchPendingStorageAction()
-        } else {
-            cancelPendingStorageRequest()
-        }
-    }
-
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        val selectedPath = if (result.resultCode == RESULT_OK) {
-            result.data?.data?.let { uri -> StorageAccess.resolveUriToPath(this, uri) }
-        } else {
-            null
+        val callback = pendingFileCallback
+        val extensions = pendingInstallFileExtensions ?: emptySet()
+        pendingFileCallback = null
+        pendingInstallFileExtensions = null
+        val uri = result.data?.data
+        if (callback == null) return@registerForActivityResult
+        lifecycleScope.launch {
+            val path = if (result.resultCode == RESULT_OK && uri != null) {
+                withContext(Dispatchers.IO) { StorageAccess.stageDocument(this@MainActivity, uri, extensions) }
+            } else null
+            if (result.resultCode == RESULT_OK && path == null) {
+                Toast.makeText(this@MainActivity, "Unable to read the selected file.", Toast.LENGTH_SHORT).show()
+            }
+            callback(path)
         }
-        val validatedPath = selectedPath?.takeIf { path ->
-            pendingInstallFileExtensions?.let { allowed ->
-                StorageAccess.matchesAllowedExtension(path, allowed)
-            } ?: true
-        }
-        dispatchFileResult(validatedPath)
     }
 
     private val folderPickerLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (pendingArchiveFolderCallback != null) {
-            val selectedPaths = if (result.resultCode == RESULT_OK) {
-                result.data?.data?.let { treeUri ->
-                    StorageAccess.resolveTreeFilePaths(
-                        context = this,
-                        treeUri = treeUri,
-                        allowedExtensions = pendingArchiveFolderExtensions ?: emptySet()
-                    )
-                } ?: emptyList()
-            } else {
-                emptyList()
+        val callback = pendingArchiveFolderCallback
+        val extensions = pendingArchiveFolderExtensions ?: emptySet()
+        pendingArchiveFolderCallback = null
+        pendingArchiveFolderExtensions = null
+        val tree = result.data?.data
+        if (callback == null) return@registerForActivityResult
+        lifecycleScope.launch {
+            val paths = if (result.resultCode == RESULT_OK && tree != null) {
+                withContext(Dispatchers.IO) { StorageAccess.stageTree(this@MainActivity, tree, extensions) }
+            } else emptyList()
+            if (result.resultCode == RESULT_OK && paths.isEmpty()) {
+                Toast.makeText(this@MainActivity, "No selected archives could be staged.", Toast.LENGTH_SHORT).show()
             }
-            dispatchArchiveFolderResult(selectedPaths)
-            return@registerForActivityResult
+            callback(paths)
         }
-
-        val selectedPath = if (result.resultCode == RESULT_OK) {
-            result.data?.data?.let { uri -> StorageAccess.resolveTreeUriToPath(this, uri) }
-        } else {
-            null
-        }
-        dispatchFolderResult(selectedPath)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -124,27 +101,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun requestStorageFolderChange(onResult: (String?) -> Unit) {
-        requestFolderPath(onResult)
+        onResult(AppStorage.defaultStoragePath(this))
     }
 
     fun requestFolderPath(onResult: (String?) -> Unit) {
-        pendingFolderCallback = onResult
-        pendingFileCallback = null
-        pendingArchiveFolderCallback = null
-        pendingInstallFileExtensions = null
-        pendingArchiveFolderExtensions = null
-        pendingStorageAction = { launchFolderPicker() }
-        ensureStorageAccess()
+        onResult(null)
     }
 
     fun requestFilePath(mimeTypes: Array<String>, onResult: (String?) -> Unit) {
         pendingFileCallback = onResult
-        pendingFolderCallback = null
         pendingArchiveFolderCallback = null
         pendingInstallFileExtensions = null
         pendingArchiveFolderExtensions = null
-        pendingStorageAction = { launchFilePicker(mimeTypes) }
-        ensureStorageAccess()
+        filePickerLauncher.launch(StorageAccess.createFilePickerIntent(mimeTypes))
     }
 
     fun requestInstallFilePath(
@@ -152,12 +121,10 @@ class MainActivity : AppCompatActivity() {
         onResult: (String?) -> Unit
     ) {
         pendingFileCallback = onResult
-        pendingFolderCallback = null
         pendingArchiveFolderCallback = null
         pendingInstallFileExtensions = allowedExtensions
         pendingArchiveFolderExtensions = null
-        pendingStorageAction = { launchInstallFilePicker() }
-        ensureStorageAccess()
+        filePickerLauncher.launch(StorageAccess.createFilePickerIntent(arrayOf("*/*")))
     }
 
     fun requestArchiveFolderPaths(
@@ -165,31 +132,15 @@ class MainActivity : AppCompatActivity() {
         onResult: (List<String>) -> Unit
     ) {
         pendingFileCallback = null
-        pendingFolderCallback = null
         pendingArchiveFolderCallback = onResult
         pendingInstallFileExtensions = null
         pendingArchiveFolderExtensions = allowedExtensions
-        pendingStorageAction = { launchInstallFolderPicker() }
-        ensureStorageAccess()
+        folderPickerLauncher.launch(StorageAccess.createFolderPickerIntent())
     }
 
     override fun onResume() {
         super.onResume()
         prepareFrontendRuntime()
-    }
-
-    private fun ensureStorageAccess() {
-        if (StorageAccess.hasStorageAccess(this)) {
-            launchPendingStorageAction()
-            return
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            manageFolderAccessLauncher.launch(StorageAccess.createManageAllFilesIntent(this))
-            return
-        }
-
-        folderPermissionLauncher.launch(StorageAccess.missingStoragePermissions(this))
     }
 
     private fun launchApp(titleId: String, appTitle: String) {
@@ -204,55 +155,6 @@ class MainActivity : AppCompatActivity() {
             R.string.shortcut_create_unsupported
         }
         Toast.makeText(this, getString(messageResId), Toast.LENGTH_SHORT).show()
-    }
-
-    private fun launchFilePicker(mimeTypes: Array<String>) {
-        filePickerLauncher.launch(StorageAccess.createFilePickerIntent(mimeTypes))
-    }
-
-    private fun launchInstallFilePicker() {
-        filePickerLauncher.launch(StorageAccess.createInstallFilePickerIntent())
-    }
-
-    private fun launchFolderPicker() {
-        folderPickerLauncher.launch(StorageAccess.createFolderPickerIntent())
-    }
-
-    private fun launchInstallFolderPicker() {
-        folderPickerLauncher.launch(StorageAccess.createInstallFolderPickerIntent())
-    }
-
-    private fun launchPendingStorageAction() {
-        val action = pendingStorageAction ?: return
-        pendingStorageAction = null
-        action.invoke()
-    }
-
-    private fun cancelPendingStorageRequest() {
-        pendingStorageAction = null
-        dispatchFileResult(null)
-        dispatchFolderResult(null)
-        dispatchArchiveFolderResult(emptyList())
-    }
-
-    private fun dispatchFolderResult(path: String?) {
-        val callback = pendingFolderCallback
-        pendingFolderCallback = null
-        callback?.invoke(path?.takeIf { it.isNotBlank() })
-    }
-
-    private fun dispatchFileResult(path: String?) {
-        val callback = pendingFileCallback
-        pendingFileCallback = null
-        pendingInstallFileExtensions = null
-        callback?.invoke(path?.takeIf { it.isNotBlank() })
-    }
-
-    private fun dispatchArchiveFolderResult(paths: List<String>) {
-        val callback = pendingArchiveFolderCallback
-        pendingArchiveFolderCallback = null
-        pendingArchiveFolderExtensions = null
-        callback?.invoke(paths)
     }
 
     private fun prepareFrontendRuntime() {
