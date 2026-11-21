@@ -4,14 +4,15 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
 import androidx.documentfile.provider.DocumentFile
-import java.io.BufferedInputStream
 import java.io.File
 import java.io.IOException
 import java.util.Locale
 import java.util.UUID
 
 object StorageAccess {
+    private const val TAG = "Vita3KImport"
     private const val MAX_STAGED_BYTES = 12L * 1024 * 1024 * 1024
     private const val MIN_FREE_BYTES = 128L * 1024 * 1024
     private const val MAX_BATCH_FILES = 128
@@ -107,15 +108,17 @@ object StorageAccess {
                         if (sizeColumn >= 0 && !it.isNull(sizeColumn)) it.getLong(sizeColumn).takeIf { n -> n >= 0 } else null
                     )
                 } ?: DocumentMetadata(fallback, null)
-        } catch (_: IllegalArgumentException) {
+        } catch (error: RuntimeException) {
+            Log.w(TAG, "metadata unavailable: ${error.javaClass.simpleName}")
             DocumentMetadata(fallback, null)
-        } catch (_: SecurityException) {
-            DocumentMetadata(null, null)
         }
     }
 
     private fun stageFile(context: Context, uri: Uri, document: DocumentMetadata, extensions: Set<String>): String? {
-        if (uri.scheme != "content") return null
+        if (uri.scheme != "content") {
+            Log.w(TAG, "staging rejected: expected content URI")
+            return null
+        }
         val archiveImport = isArchiveImport(extensions)
         val displayName = document.name?.takeIf { candidate ->
             candidate.length in 1..180 && candidate != "." && candidate != ".." &&
@@ -124,7 +127,10 @@ object StorageAccess {
         val name = displayName?.takeIf { matchesAllowedExtension(it, extensions) }
             ?: if (archiveImport && extensions.any { it.trimStart('.').equals("zip", ignoreCase = true) }) {
                 "selected-archive.zip"
-            } else return null
+            } else {
+                Log.w(TAG, "staging rejected: unsupported document name or extension")
+                return null
+            }
 
         val roots = listOfNotNull(context.filesDir, context.getExternalFilesDir(null))
             .map { File(it, "scoped-imports") }
@@ -132,51 +138,68 @@ object StorageAccess {
         val used = roots.filter(File::isDirectory).sumOf { dir ->
             dir.walkTopDown().filter(File::isFile).sumOf(File::length)
         }
-        val root = roots.firstOrNull { dir ->
-            (dir.isDirectory || dir.mkdir()) &&
-                minOf(MAX_STAGED_BYTES - used, dir.usableSpace - MIN_FREE_BYTES) >= (document.size ?: 1L)
-        } ?: return null
-        val remaining = minOf(MAX_STAGED_BYTES - used, root.usableSpace - MIN_FREE_BYTES)
-        if (remaining <= 0) return null
-        val stage = File(root, UUID.randomUUID().toString())
-        if (!stage.mkdir()) return null
-        val target = File(stage, name)
+        var phase = "open"
+        var written = 0L
+        var stage: File? = null
+        var target: File? = null
         var complete = false
         try {
-            val input = context.contentResolver.openInputStream(uri) ?: return null
-            BufferedInputStream(input, 128 * 1024).use { source ->
-                if (archiveImport) {
-                    source.mark(4)
-                    val zipHeader = source.read() == 0x50 && source.read() == 0x4b &&
-                        source.read() == 0x03 && source.read() == 0x04
-                    if (!zipHeader) return null
-                    source.reset()
+            // The picker grant is sufficient while reading the selected document. Native
+            // installation receives a local path and never depends on the URI grant.
+            val descriptor = context.contentResolver.openAssetFileDescriptor(uri, "r")
+                ?: throw IOException("Provider returned no descriptor")
+            descriptor.use { asset ->
+                val expected = asset.length.takeIf { it >= 0 }
+                val announced = document.size
+                if (expected != null && announced != null && expected != announced) {
+                    Log.w(TAG, "provider size disagreement: descriptor=$expected metadata=$announced")
                 }
-                target.outputStream().use { output ->
-                    val buffer = ByteArray(128 * 1024)
-                    var written = 0L
-                    while (true) {
-                        val count = source.read(buffer)
-                        if (count < 0) break
-                        written += count
-                        if (written > remaining) throw IOException("Import exceeds available staging space")
-                        output.write(buffer, 0, count)
+                phase = "capacity"
+                val root = roots.firstOrNull { dir ->
+                    (dir.isDirectory || dir.mkdir()) &&
+                        minOf(MAX_STAGED_BYTES - used, dir.usableSpace - MIN_FREE_BYTES) >= (expected ?: 1L)
+                } ?: throw IOException("Insufficient staging capacity")
+                val remaining = minOf(MAX_STAGED_BYTES - used, root.usableSpace - MIN_FREE_BYTES)
+                val directory = File(root, UUID.randomUUID().toString())
+                if (!directory.mkdir()) throw IOException("Cannot create staging directory")
+                stage = directory
+                val outputFile = File(directory, name)
+                target = outputFile
+                Log.i(TAG, "reading selected document: expected=$expected metadata=$announced budget=$remaining")
+                phase = "copy"
+                asset.createInputStream().use { source ->
+                    outputFile.outputStream().use { output ->
+                        val buffer = ByteArray(128 * 1024)
+                        while (true) {
+                            val count = source.read(buffer)
+                            if (count < 0) break
+                            if (count > remaining - written) throw IOException("Staging capacity exceeded")
+                            output.write(buffer, 0, count)
+                            written += count
+                        }
                     }
-                    if (written == 0L || (document.size != null && written != document.size)) {
-                        throw IOException("Incomplete import")
-                    }
+                }
+                phase = "verify"
+                if (written == 0L || (expected != null && written != expected)) {
+                    throw IOException("Incomplete document")
                 }
             }
             complete = true
-            return target.absolutePath
-        } catch (_: IOException) {
+            Log.i(TAG, "staged document for native installer: bytes=$written archive=$archiveImport")
+            return target?.absolutePath
+        } catch (error: IOException) {
+            Log.w(TAG, "staging failed: phase=$phase bytes=$written error=${error.javaClass.simpleName}")
             return null
-        } catch (_: SecurityException) {
+        } catch (error: SecurityException) {
+            Log.w(TAG, "staging permission denied: phase=$phase bytes=$written")
+            return null
+        } catch (error: IllegalArgumentException) {
+            Log.w(TAG, "provider rejected the document: phase=$phase bytes=$written")
             return null
         } finally {
             if (!complete) {
-                target.delete()
-                stage.delete()
+                target?.delete()
+                stage?.delete()
             }
         }
     }
